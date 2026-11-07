@@ -35,6 +35,16 @@ import {
   Disc3,
   SlidersHorizontal,
   Zap,
+  Heart,
+  Shuffle,
+  Repeat,
+  Maximize2,
+  Minimize2,
+  Smile,
+  Settings,
+  AlignLeft,
+  Info,
+  ExternalLink,
 } from 'lucide-react';
 import { YoutubeIcon as Youtube } from '../components/YoutubeIcon';
 import { useRoom } from '../context/RoomContext';
@@ -54,6 +64,7 @@ export const RoomPage: React.FC = () => {
   const {
     roomState,
     messages,
+    reactions,
     error,
     isConnecting,
     joinRoom,
@@ -89,6 +100,14 @@ export const RoomPage: React.FC = () => {
     removeFromQueue,
     clearQueue,
     playTrack,
+    volume,
+    setVolume,
+    isMuted,
+    toggleMute,
+    isShuffle,
+    toggleShuffle,
+    playMode,
+    cyclePlayMode,
   } = usePlayer();
 
   const targetCode = (roomCode || '').toUpperCase();
@@ -102,26 +121,30 @@ export const RoomPage: React.FC = () => {
     return '';
   });
   const [copied, setCopied] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'queue' | 'stage' | 'chat'>('stage');
+  const [viewMode, setViewMode] = useState<'artwork' | 'vinyl'>('artwork');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLiked, setIsLiked] = useState(false);
 
-  const isPreviousHostOfThisRoom = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      const saved = sessionStorage.getItem('auxparty_session');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.role === 'host' && parsed.roomCode === targetCode;
-      }
-    } catch {}
-    return false;
-  }, [targetCode]);
-  const [activeTab, setActiveTab] = useState<'queue' | 'chat'>('queue');
+  // Room custom name / topic
+  const [roomTitle, setRoomTitle] = useState(() => {
+    return localStorage.getItem(`room_title_${targetCode}`) || 'hideout';
+  });
+  const [roomDescription, setRoomDescription] = useState(() => {
+    return localStorage.getItem(`room_desc_${targetCode}`) || 'Add a description';
+  });
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isEditingDesc, setIsEditingDesc] = useState(false);
+
   const [chatInput, setChatInput] = useState('');
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isSpotifyModalOpen, setIsSpotifyModalOpen] = useState(false);
   const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [isAuxMenuOpen, setIsAuxMenuOpen] = useState(false);
+  const [isPeersOpen, setIsPeersOpen] = useState(false);
 
-  // In-Room Search
+  // In-Room Search & Quick Add
   const [roomSearchQuery, setRoomSearchQuery] = useState('');
   const [roomSearchResults, setRoomSearchResults] = useState<Track[]>([]);
   const [isRoomSearching, setIsRoomSearching] = useState(false);
@@ -133,18 +156,7 @@ export const RoomPage: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Memoize main stage background style to avoid CSS re-parsing on time updates
-  const stageGradientStyle = useMemo(
-    () => ({
-      background: `
-        radial-gradient(ellipse 65% 55% at 20% 24%, ${palette.primaryGlow} 0%, transparent 68%),
-        radial-gradient(ellipse 58% 52% at 84% 76%, ${palette.secondaryGlow} 0%, transparent 64%),
-        #101017
-      `,
-    }),
-    [palette.primaryGlow, palette.secondaryGlow]
-  );
-
+  // Extract color palette whenever current track changes
   useEffect(() => {
     if (currentTrack?.image) {
       extractPalette(currentTrack.image, `${currentTrack.title}-${currentTrack.artist}`).then(setPalette);
@@ -153,19 +165,89 @@ export const RoomPage: React.FC = () => {
     }
   }, [currentTrack?.image, currentTrack?.title, currentTrack?.artist]);
 
+  // High-Contrast Alive Ambient Gradient Background (Matching Image 1 reference)
+  const stageGradientStyle = useMemo(
+    () => ({
+      background: `
+        radial-gradient(ellipse 70% 60% at 20% 25%, ${palette.primaryGlow} 0%, transparent 72%),
+        radial-gradient(ellipse 65% 55% at 85% 75%, ${palette.secondaryGlow} 0%, transparent 68%),
+        #0b0c13
+      `,
+    }),
+    [palette.primaryGlow, palette.secondaryGlow]
+  );
+
+  // In-Room Search & Quick YouTube Resolution
+  const handleRoomSearchChange = (val: string) => {
+    setRoomSearchQuery(val);
+    const ytId = extractYouTubeId(val);
+    if (ytId) {
+      setIsRoomSearching(true);
+      fetchYouTubeTrack(val).then((ytTrack) => {
+        setIsRoomSearching(false);
+        if (ytTrack) {
+          setRoomSearchResults([ytTrack]);
+        }
+      });
+    }
+  };
+
+  const handleAddSearchOrUrl = async () => {
+    const trimmed = roomSearchQuery.trim();
+    if (!trimmed) return;
+
+    const ytId = extractYouTubeId(trimmed);
+    if (ytId) {
+      setIsRoomSearching(true);
+      const ytTrack = await fetchYouTubeTrack(trimmed);
+      setIsRoomSearching(false);
+      if (ytTrack) {
+        addToRoomQueue(ytTrack);
+        setRoomSearchQuery('');
+        setRoomSearchResults([]);
+        return;
+      }
+    }
+
+    if (roomSearchResults.length > 0) {
+      addToRoomQueue(roomSearchResults[0]);
+      setRoomSearchQuery('');
+      setRoomSearchResults([]);
+      return;
+    }
+
+    setIsRoomSearching(true);
+    const results = await searchTracks(trimmed);
+    setIsRoomSearching(false);
+    if (results.length > 0) {
+      addToRoomQueue(results[0]);
+      setRoomSearchQuery('');
+      setRoomSearchResults([]);
+    }
+  };
+
+  const handleRoomSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await handleAddSearchOrUrl();
+    }
+  };
+
   useEffect(() => {
     if (!roomSearchQuery.trim()) {
       setRoomSearchResults([]);
       setIsRoomSearching(false);
       return;
     }
+    if (extractYouTubeId(roomSearchQuery)) return;
+
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     setIsRoomSearching(true);
     searchDebounceRef.current = setTimeout(async () => {
       const res = await searchTracks(roomSearchQuery);
       setRoomSearchResults(res);
       setIsRoomSearching(false);
-    }, 300);
+    }, 280);
   }, [roomSearchQuery]);
 
   // Auto-join room on mount if nickname is already saved
@@ -215,6 +297,17 @@ export const RoomPage: React.FC = () => {
     if (!chatInput.trim()) return;
     sendMessage(chatInput);
     setChatInput('');
+    setIsEmojiPickerOpen(false);
+  };
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -225,16 +318,17 @@ export const RoomPage: React.FC = () => {
   };
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const emojis = ['❤️', '🔥', '✨', '⚡', '🎵', '🎉'];
+  const emojis = ['❤️', '🔥', '✨', '⚡', '🎵'];
+  const quickChatEmojis = ['😊', '🔥', '💖', '🎶', '🎉', '👏', '🚀', '💯'];
   const totalPeers = Math.max(1, roomState.peers.length);
   const skipThreshold = Math.ceil(totalPeers / 2);
   const hasVotedSkip = roomState.skipVotes.includes(roomState.userName);
   const isYT = currentTrack?.source === 'youtube' || Boolean(currentTrack?.youtubeId);
 
-  // NOT CONNECTED VIEW: Join Screen
+  // NOT CONNECTED VIEW: Sleek Join Screen
   if (!roomState.connected || roomState.roomCode !== targetCode) {
     return (
-      <div className="min-h-screen text-zinc-100 flex flex-col justify-center items-center p-4 selection:bg-purple-600 relative overflow-hidden">
+      <div className="min-h-screen text-zinc-100 flex flex-col justify-center items-center p-4 selection:bg-purple-600 relative overflow-hidden bg-[#0c0c14]">
         <div className="relative z-10 w-full max-w-md glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 border border-white/10">
           <Link
             to="/"
@@ -244,12 +338,12 @@ export const RoomPage: React.FC = () => {
           </Link>
 
           <div className="flex items-center gap-3.5">
-            <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 flex items-center justify-center text-white shadow-xl shadow-purple-600/30 border border-white/20">
-              <Radio className="w-6 h-6 animate-pulse" />
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 flex items-center justify-center text-white shadow-xl shadow-purple-600/30 border border-white/20">
+              <span className="font-black text-xl tracking-tighter">w</span>
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-black text-white">Room #{targetCode}</h2>
+                <h2 className="text-xl font-black text-white">hideout #{targetCode}</h2>
                 <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
                   HIFI Sync
                 </span>
@@ -260,81 +354,60 @@ export const RoomPage: React.FC = () => {
             </div>
           </div>
 
-          {isPreviousHostOfThisRoom && (
-            <div className="p-3.5 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-200 text-xs flex items-center justify-between gap-3 shadow-lg shadow-purple-900/20">
-              <div>
-                <p className="font-bold text-white flex items-center gap-1.5">
-                  <Crown className="w-3.5 h-3.5 text-purple-300" />
-                  You were hosting this room
-                </p>
-                <p className="text-[11px] text-purple-300/80 mt-0.5">Resume your DJ session with 1-click.</p>
+          {error && (
+            <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{error}</span>
               </div>
-              <button
-                type="button"
-                onClick={handleCreateThisRoom}
-                className="px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition-all shrink-0 shadow-lg shadow-purple-600/30 hover:scale-[1.02] active:scale-95"
-              >
-                Resume as Host
+              <button onClick={clearError} className="text-rose-400 hover:text-white font-bold text-xs ml-2">
+                ✕
               </button>
             </div>
           )}
 
-          {error && (
-            <div className="p-4 rounded-2xl bg-red-950/50 border border-red-500/30 text-red-200 text-xs space-y-2.5 shadow-lg shadow-red-950/20">
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
-                <span className="leading-relaxed font-medium">{error}</span>
-              </div>
-              <div className="pt-2 border-t border-red-500/20 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-zinc-300">Host not active? Start it yourself:</span>
-                <button
-                  type="button"
-                  onClick={handleCreateThisRoom}
-                  className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition-colors shrink-0 shadow-md"
-                >
-                  Host Room #{targetCode}
-                </button>
-              </div>
-            </div>
-          )}
-
           <form onSubmit={handleJoin} className="space-y-4">
-            <div>
-              <label className="text-xs font-bold text-zinc-300 mb-1.5 block uppercase tracking-wider">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
                 Your Nickname
               </label>
               <input
                 type="text"
                 value={userNameInput}
-                onChange={(e) => {
-                  setUserNameInput(e.target.value);
-                  if (typeof window !== 'undefined') {
-                    localStorage.setItem('auxparty_nickname', e.target.value);
-                  }
-                }}
-                placeholder="e.g. Alex"
-                autoFocus
-                className="w-full glass-input rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none transition-all font-medium"
+                onChange={(e) => setUserNameInput(e.target.value)}
+                placeholder="e.g. DJ Star, Alex, Luna"
+                maxLength={24}
+                required
+                className="w-full glass-input rounded-2xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none transition-all font-medium"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-sm shadow-xl shadow-purple-600/40 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 border border-white/20"
+              disabled={isConnecting}
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 text-white font-bold text-sm shadow-xl shadow-purple-600/30 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 border border-white/20 disabled:opacity-50"
             >
-              <Headphones className="w-4 h-4" />
-              Join Room #{targetCode} Now
+              {isConnecting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Connecting to Party...</span>
+                </>
+              ) : (
+                <>
+                  <Radio className="w-4 h-4" />
+                  <span>Join Room #{targetCode}</span>
+                </>
+              )}
             </button>
           </form>
 
-          <div className="pt-2 text-center border-t border-white/5">
-            <span className="text-xs text-zinc-400 block mb-2 font-medium">Want to start this room as Host / DJ?</span>
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
+            <span>Room #{targetCode}</span>
             <button
-              type="button"
               onClick={handleCreateThisRoom}
-              className="text-xs font-bold text-purple-400 hover:text-purple-300 underline underline-offset-4 transition-colors"
+              className="text-purple-400 hover:text-purple-300 font-bold transition-colors"
             >
-              Start Room #{targetCode} as DJ (Host)
+              Host this Room
             </button>
           </div>
         </div>
@@ -342,142 +415,170 @@ export const RoomPage: React.FC = () => {
     );
   }
 
-  // CONNECTED VIEW: The Full Glassmorphic Room Experience
+  // CONNECTED VIEW: The Full 3-Column Experience (Matching Image 1 Reference)
   return (
-    <div className="min-h-screen text-zinc-100 flex flex-col pb-24 selection:bg-purple-600 selection:text-white relative overflow-x-hidden">
-      {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 w-full glass-panel border-b border-white/10 px-4 md:px-8 py-3 flex items-center justify-between gap-4">
-        {/* Left: Brand & Room Tag */}
+    <div className="h-screen w-screen text-zinc-100 flex flex-col selection:bg-purple-600 selection:text-white relative overflow-hidden bg-[#0a0a10]">
+      {/* Floating Animated Reaction Emojis Canvas */}
+      <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
+        {reactions.map((r) => (
+          <div
+            key={r.id}
+            className="absolute bottom-16 animate-reaction text-3xl select-none"
+            style={{ left: `${r.x}%` }}
+          >
+            {r.emoji}
+          </div>
+        ))}
+      </div>
+
+      {/* TOP HEADER BAR (Clean, Minimalist, Matching Image 1) */}
+      <header className="h-14 shrink-0 w-full glass-panel border-b border-white/10 px-3 sm:px-6 flex items-center justify-between gap-3 z-30">
+        {/* Left: Brand Logo & Room Name */}
         <div className="flex items-center gap-3">
           <Link
             to="/"
-            className="w-9 h-9 rounded-xl glass-button flex items-center justify-center text-zinc-400 hover:text-white transition-colors"
-            title="Home"
+            className="w-8 h-8 rounded-xl bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/30 transition-all font-black text-lg tracking-tighter"
+            title="AuxParty Home"
           >
-            <ArrowLeft className="w-4 h-4" />
+            w
           </Link>
 
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-              <span className="font-black text-base text-white tracking-wide">
-                Room #{roomState.roomCode}
-              </span>
+              {isEditingTitle ? (
+                <input
+                  type="text"
+                  value={roomTitle}
+                  onChange={(e) => setRoomTitle(e.target.value)}
+                  onBlur={() => {
+                    setIsEditingTitle(false);
+                    localStorage.setItem(`room_title_${targetCode}`, roomTitle);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setIsEditingTitle(false);
+                      localStorage.setItem(`room_title_${targetCode}`, roomTitle);
+                    }
+                  }}
+                  autoFocus
+                  className="bg-transparent text-sm font-black text-white border-b border-purple-500 focus:outline-none"
+                />
+              ) : (
+                <span
+                  onClick={() => setIsEditingTitle(true)}
+                  className="font-black text-sm text-white tracking-wide cursor-pointer hover:text-purple-300 transition-colors"
+                  title="Click to edit room name"
+                >
+                  {roomTitle}
+                </span>
+              )}
+
               <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
                 {roomState.isHost ? 'Host' : roomState.isDJ ? 'DJ' : 'Listener'}
               </span>
-              {roomState.auxMode === 'open-aux' && (
-                <span className="hidden sm:inline text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  Open Aux
-                </span>
-              )}
             </div>
-            <p className="text-[11px] text-zinc-400 font-mono">
-              /room/{roomState.roomCode.toLowerCase()}
-            </p>
-          </div>
-        </div>
 
-        {/* Center: Connected Friends Avatars */}
-        <div className="hidden lg:flex items-center gap-2 glass-panel-subtle px-4 py-1.5 rounded-full border border-white/10">
-          <Users className="w-3.5 h-3.5 text-purple-400" />
-          <span className="text-xs font-bold text-zinc-300">
-            {roomState.peers.length} Friends:
-          </span>
-          <div className="flex items-center gap-1.5">
-            {roomState.peers.map((p) => (
-              <span
-                key={p.id}
-                className="flex items-center gap-1 text-[11px] font-bold glass-button px-2.5 py-0.5 rounded-full text-zinc-200 border border-white/10 shadow-sm"
+            {isEditingDesc ? (
+              <input
+                type="text"
+                value={roomDescription}
+                onChange={(e) => setRoomDescription(e.target.value)}
+                onBlur={() => {
+                  setIsEditingDesc(false);
+                  localStorage.setItem(`room_desc_${targetCode}`, roomDescription);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setIsEditingDesc(false);
+                    localStorage.setItem(`room_desc_${targetCode}`, roomDescription);
+                  }
+                }}
+                autoFocus
+                className="bg-transparent text-[11px] text-zinc-400 border-b border-zinc-600 focus:outline-none"
+              />
+            ) : (
+              <p
+                onClick={() => setIsEditingDesc(true)}
+                className="text-[11px] text-zinc-400 hover:text-zinc-200 cursor-pointer truncate max-w-[160px] sm:max-w-xs transition-colors"
+                title="Click to edit description"
               >
-                {p.isHost ? (
-                  <Crown className="w-3 h-3 text-amber-400" />
-                ) : p.name === roomState.activeDjName ? (
-                  <Disc3 className="w-3 h-3 text-purple-400 animate-spin" />
-                ) : null}
-                <span>{p.name}</span>
-              </span>
-            ))}
+                {roomDescription}
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Right Action Bar - Minimalist Symbols & Emojis with Frosted Glassmorphism */}
+        {/* Center / Right: Minimalist Controls Bar */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Minimalist Soundboard Dock (Emojis with frosted glass) */}
-          <div className="flex items-center gap-0.5 sm:gap-1 glass-panel-subtle px-1.5 py-1 rounded-full border border-white/10 shadow-inner backdrop-blur-md">
+          {/* Soundboard Dock (Frosted Pill with Minimalist Emojis) */}
+          <div className="hidden md:flex items-center gap-0.5 glass-panel-subtle px-1.5 py-1 rounded-full border border-white/10">
             <button
               onClick={() => triggerSound('airhorn')}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-xs hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
               title="Airhorn (📢)"
-              aria-label="Airhorn"
             >
               📢
             </button>
             <button
               onClick={() => triggerSound('scratch')}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-xs hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
               title="Vinyl Scratch (💽)"
-              aria-label="Scratch"
             >
               💽
             </button>
             <button
               onClick={() => triggerSound('bassdrop')}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-xs hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
               title="Bass Drop (💣)"
-              aria-label="Bass Drop"
             >
               💣
             </button>
             <button
               onClick={() => triggerSound('cheer')}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
-              title="Applause & Cheer (👏)"
-              aria-label="Cheer"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-xs hover:bg-white/15 transition-all active:scale-90 hover:scale-110"
+              title="Applause (👏)"
             >
               👏
             </button>
           </div>
 
-          {/* Minimalist YouTube Button */}
+          {/* Direct YouTube Modal Button */}
           <button
             onClick={() => setIsYouTubeModalOpen(true)}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full glass-button flex items-center justify-center text-red-500 hover:text-white hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 transition-all active:scale-95 shadow-sm"
-            title="Add YouTube Track"
-            aria-label="Add YouTube Track"
+            className="w-8 h-8 rounded-full glass-button flex items-center justify-center text-red-400 hover:text-white hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 transition-all active:scale-95"
+            title="Add YouTube URL"
           >
             <Youtube className="w-4 h-4 fill-current text-red-500" />
           </button>
 
-          {/* Pass Aux (Host Controls) - Minimalist Glass */}
+          {/* Pass Aux / Host Controls */}
           {roomState.isHost && (
             <div className="relative">
               <button
                 onClick={() => setIsAuxMenuOpen(!isAuxMenuOpen)}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full glass-button flex items-center justify-center text-amber-300 hover:text-amber-200 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/40 transition-all active:scale-95 shadow-sm"
-                title="DJ Controls & Pass Aux Cord"
-                aria-label="Pass Aux"
+                className="w-8 h-8 rounded-full glass-button flex items-center justify-center text-amber-300 hover:text-amber-200 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/30 transition-all active:scale-95"
+                title="Pass Aux Cord & DJ Mode"
               >
-                <SlidersHorizontal className="w-4 h-4" />
+                <SlidersHorizontal className="w-3.5 h-3.5" />
               </button>
 
               {isAuxMenuOpen && (
-                <div className="absolute right-0 mt-2 w-56 glass-panel rounded-2xl p-2 shadow-2xl z-50 space-y-1 border border-white/15 backdrop-blur-xl">
-                  <div className="px-3 py-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                    Aux Cord Mode
+                <div className="absolute right-0 mt-2 w-52 glass-panel rounded-2xl p-2 shadow-2xl z-50 space-y-1 border border-white/15 backdrop-blur-xl">
+                  <div className="px-3 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                    Aux Mode
                   </div>
                   <button
                     onClick={() => {
                       setAuxMode('host-only');
                       setIsAuxMenuOpen(false);
                     }}
-                    className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-bold flex items-center justify-between transition-colors ${
+                    className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-bold flex items-center justify-between ${
                       roomState.auxMode === 'host-only'
-                        ? 'bg-white/15 text-white border border-white/20'
+                        ? 'bg-white/15 text-white'
                         : 'text-zinc-300 hover:bg-white/10'
                     }`}
                   >
-                    <span>Host Only (Strict DJ)</span>
+                    <span>Host Only</span>
                     {roomState.auxMode === 'host-only' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
                   </button>
                   <button
@@ -485,18 +586,18 @@ export const RoomPage: React.FC = () => {
                       setAuxMode('open-aux');
                       setIsAuxMenuOpen(false);
                     }}
-                    className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-bold flex items-center justify-between transition-colors ${
+                    className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-bold flex items-center justify-between ${
                       roomState.auxMode === 'open-aux'
-                        ? 'bg-white/15 text-white border border-white/20'
+                        ? 'bg-white/15 text-white'
                         : 'text-zinc-300 hover:bg-white/10'
                     }`}
                   >
-                    <span>Open Aux (Anyone DJs)</span>
+                    <span>Open Aux</span>
                     {roomState.auxMode === 'open-aux' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
                   </button>
 
-                  <div className="px-3 py-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider pt-2 border-t border-white/10">
-                    Pass Aux To Friend
+                  <div className="px-3 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider pt-2 border-t border-white/10">
+                    Pass Aux
                   </div>
                   {roomState.peers.map((p) => (
                     <button
@@ -505,7 +606,7 @@ export const RoomPage: React.FC = () => {
                         transferAux(p.name);
                         setIsAuxMenuOpen(false);
                       }}
-                      className="w-full text-left px-3 py-1.5 rounded-xl text-xs font-medium text-zinc-300 hover:bg-white/10 flex items-center justify-between transition-colors"
+                      className="w-full text-left px-3 py-1.5 rounded-xl text-xs font-medium text-zinc-300 hover:bg-white/10 flex items-center justify-between"
                     >
                       <span>{p.name}</span>
                       {p.name === roomState.activeDjName && (
@@ -518,570 +619,786 @@ export const RoomPage: React.FC = () => {
             </div>
           )}
 
-          {/* QR Code - Minimalist Glass Button */}
+          {/* QR Code Button */}
           <button
             onClick={() => setIsQRModalOpen(true)}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full glass-button flex items-center justify-center text-zinc-300 hover:text-white border border-white/10 hover:bg-white/10 transition-all active:scale-95 shadow-sm"
+            className="w-8 h-8 rounded-full glass-button flex items-center justify-center text-zinc-300 hover:text-white border border-white/10 transition-all active:scale-95"
             title="Scan QR Code to join on phone"
-            aria-label="Scan QR Code"
           >
-            <QrCode className="w-4 h-4" />
+            <QrCode className="w-3.5 h-3.5" />
           </button>
 
-          {/* Share / Invite Pill with Minimalist Symbol */}
+          {/* Settings Button */}
+          <button
+            onClick={() => setIsSpotifyModalOpen(true)}
+            className="w-8 h-8 rounded-full glass-button flex items-center justify-center text-zinc-400 hover:text-white border border-white/10 transition-all active:scale-95"
+            title="Spotify Import & Settings"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Invite Pill Button (Matching Image 1) */}
           <button
             onClick={handleCopyLink}
-            className="glass-button h-8 sm:h-9 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold text-zinc-300 border border-white/10 hover:border-white/25 hover:text-white hover:bg-white/10 transition-all active:scale-95 shadow-sm"
+            className="glass-button h-8 px-3 rounded-full flex items-center gap-1.5 text-xs font-bold text-zinc-200 border border-white/10 hover:border-white/20 hover:text-white transition-all active:scale-95"
             title="Copy Invite Link"
-            aria-label="Invite"
           >
             {copied ? (
               <>
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-[11px] text-emerald-300 font-medium">Copied</span>
+                <span className="text-[11px] text-emerald-300">Copied</span>
               </>
             ) : (
               <>
                 <Share2 className="w-3.5 h-3.5 text-purple-300" />
-                <span className="hidden sm:inline text-[11px] tracking-wide">Invite</span>
+                <span className="text-[11px] font-mono tracking-wider">Invite {targetCode}</span>
               </>
             )}
           </button>
 
-          {/* Spotify Import - Minimalist Glass Button */}
+          {/* Fullscreen Toggle */}
           <button
-            onClick={() => setIsSpotifyModalOpen(true)}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full glass-button flex items-center justify-center text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-500/40 transition-all active:scale-95 shadow-sm"
-            title="Import Spotify Playlist"
-            aria-label="Spotify Import"
+            onClick={toggleFullscreen}
+            className="w-8 h-8 rounded-full glass-button flex items-center justify-center text-zinc-400 hover:text-white border border-white/10 transition-all active:scale-95 hidden sm:flex"
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
           >
-            <Sparkles className="w-4 h-4" />
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
 
-          {/* Leave Room - Minimalist Glass Button */}
+          {/* Leave Button */}
           <button
             onClick={handleExit}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full glass-button flex items-center justify-center text-zinc-400 hover:text-rose-400 hover:bg-rose-500/15 border border-white/10 hover:border-rose-500/30 transition-all active:scale-95 shadow-sm"
-            title="Leave room"
-            aria-label="Leave room"
+            className="h-8 px-2.5 rounded-full glass-button flex items-center gap-1.5 text-xs font-bold text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 border border-white/10 transition-all active:scale-95"
+            title="Leave Room"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-[11px]">Leave</span>
           </button>
         </div>
       </header>
 
-      {/* Main Room Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6">
-        {/* LEFT / CENTER: The Main DJ Stage (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
-          {/* Main Stage Card with Exact High-Contrast Dual Glow (Reference Matched) */}
-          <div
-            className="relative overflow-hidden rounded-3xl p-5 sm:p-7 shadow-2xl flex flex-col items-center justify-between min-h-[480px] border border-white/10 transition-all duration-700"
-            style={stageGradientStyle}
-          >
-            {/* Stage Top Bar (Matching hideout reference) */}
-            <div className="w-full flex items-center justify-between text-xs text-zinc-400 z-10 px-1 mb-2">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span className="font-bold text-emerald-400 text-[11px] tracking-wider uppercase">Now playing</span>
-              </div>
-              <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
-                <span className="px-2.5 py-0.5 rounded-full bg-black/40 border border-white/10 text-zinc-300">
-                  Sync 42 ms
-                </span>
-                {isYT ? (
-                  <span className="px-2 py-0.5 rounded-full bg-red-600/20 text-red-300 border border-red-500/30 flex items-center gap-1 font-sans font-bold">
-                    <Youtube className="w-3 h-3 fill-current text-red-500" /> YT
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-sans font-bold">
-                    320k
-                  </span>
+      {/* MOBILE TAB SWITCHER (< 1024px) */}
+      <div className="lg:hidden shrink-0 px-3 py-2 bg-black/40 border-b border-white/10 flex items-center justify-around gap-2 z-20">
+        <button
+          onClick={() => setMobileTab('queue')}
+          className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+            mobileTab === 'queue'
+              ? 'bg-white/15 text-white border border-white/20'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <ListMusic className="w-3.5 h-3.5 text-purple-400" />
+          <span>Up Next</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/10">{queue.length}</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('stage')}
+          className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+            mobileTab === 'stage'
+              ? 'bg-white/15 text-white border border-white/20'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Zap className="w-3.5 h-3.5 text-amber-400" />
+          <span>Now Playing</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('chat')}
+          className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+            mobileTab === 'chat'
+              ? 'bg-white/15 text-white border border-white/20'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Chat</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/10">{messages.length}</span>
+        </button>
+      </div>
+
+      {/* MAIN 3-COLUMN LAYOUT (Matching Image 1 Reference) */}
+      <main className="flex-1 overflow-hidden p-2.5 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 max-w-[1800px] w-full mx-auto">
+        {/* ======================================================== */}
+        {/* COLUMN 1 (LEFT): UP NEXT / QUEUE (3 Cols)                */}
+        {/* ======================================================== */}
+        <aside
+          className={`lg:col-span-3 flex-col h-full glass-panel rounded-3xl p-3 sm:p-4 overflow-hidden border border-white/10 relative transition-all ${
+            mobileTab === 'queue' ? 'flex' : 'hidden lg:flex'
+          }`}
+        >
+          {/* Header: Up Next & Queued Count */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
+            <div className="flex items-center gap-2">
+              <ListMusic className="w-4 h-4 text-purple-400" />
+              <h2 className="font-black text-sm text-white tracking-wide">Up Next</h2>
+            </div>
+            <span className="text-xs font-bold text-zinc-400 font-mono">
+              {queue.length} queued
+            </span>
+          </div>
+
+          {/* Quick Search & Direct YouTube Input with + Add Button */}
+          <div className="py-3 relative shrink-0">
+            <div className="relative flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+                <input
+                  type="text"
+                  value={roomSearchQuery}
+                  onChange={(e) => handleRoomSearchChange(e.target.value)}
+                  onKeyDown={handleRoomSearchKeyDown}
+                  placeholder="Search songs or paste link..."
+                  className="w-full glass-input rounded-2xl pl-8 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none transition-all font-medium"
+                />
+                {isRoomSearching && (
+                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-purple-400" />
                 )}
               </div>
+
+              {/* Purple + Add Pill Button (Matching Image 1) */}
+              <button
+                type="button"
+                onClick={handleAddSearchOrUrl}
+                disabled={!roomSearchQuery.trim() || isRoomSearching}
+                className="px-3.5 py-2 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md shadow-purple-600/30 transition-all flex items-center gap-1 active:scale-95 disabled:opacity-40 shrink-0"
+                title="Add to Queue"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
             </div>
 
-            {/* Vertical Floating Reactions Dock (Matching Image 1 Reference) */}
-            <div className="absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 hidden sm:flex flex-col gap-2 p-1.5 rounded-full glass-panel-subtle border border-white/15 z-20 shadow-2xl">
-              {emojis.map((emoji) => (
-                <button
-                  key={emoji}
-                  onClick={() => sendReaction(emoji)}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-base hover:scale-130 active:scale-95 hover:bg-white/15 transition-all"
-                  title={`React ${emoji}`}
-                  aria-label={`React ${emoji}`}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-
-            {currentTrack ? (
-              <div className="relative z-10 flex flex-col items-center text-center max-w-md w-full space-y-4 my-auto">
-                {/* Spinning Vinyl Record Container */}
-                <div className="relative group flex items-center justify-center">
+            {/* Instant Search Suggestions Dropdown */}
+            {roomSearchResults.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto glass-panel rounded-2xl p-1.5 space-y-1 shadow-2xl z-40 border border-white/15">
+                {roomSearchResults.map((t) => (
                   <div
-                    className={`w-44 h-44 sm:w-56 sm:h-56 md:w-64 md:h-64 rounded-full bg-zinc-950 p-2 shadow-2xl border-4 border-white/15 flex items-center justify-center ${
-                      isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
-                    }`}
-                    style={{ willChange: isPlaying ? 'transform' : 'auto' }}
+                    key={t.id}
+                    onClick={() => {
+                      addToRoomQueue(t);
+                      setRoomSearchQuery('');
+                      setRoomSearchResults([]);
+                    }}
+                    className="flex items-center justify-between p-2 rounded-xl hover:bg-white/10 cursor-pointer transition-colors text-xs"
                   >
-                    {/* Vinyl Grooves with Glass Reflections */}
-                    <div className="w-full h-full rounded-full border border-white/10 flex items-center justify-center p-2.5 relative overflow-hidden">
-                      <div className="absolute inset-0 rounded-full border border-white/5 scale-90"></div>
-                      <div className="absolute inset-0 rounded-full border border-white/5 scale-75"></div>
-
-                      {/* Center Album Art */}
-                      <img
-                        src={currentTrack.image}
-                        alt={currentTrack.title}
-                        className="w-24 h-24 sm:w-32 sm:h-32 md:w-36 md:h-36 rounded-full object-cover shadow-2xl border-2 border-white/30"
-                      />
-                      {/* Spindle hole */}
-                      <div className="absolute w-4 h-4 rounded-full bg-zinc-950 border-2 border-zinc-600"></div>
+                    <div className="flex items-center gap-2 truncate flex-1">
+                      <img src={t.image} alt={t.title} className="w-7 h-7 rounded-lg object-cover" />
+                      <div className="truncate">
+                        <p className="font-bold text-zinc-200 truncate">{t.title}</p>
+                        <p className="text-[10px] text-zinc-400 truncate">{t.artist}</p>
+                      </div>
                     </div>
-                  </div>
-
-                  {isPlaying && (
-                    <div
-                      className="absolute -inset-6 rounded-full -z-10 pointer-events-none opacity-40 transition-opacity"
-                      style={{
-                        background: `radial-gradient(circle, ${palette.primary} 0%, transparent 70%)`,
-                        transform: 'translateZ(0)',
-                      }}
-                    />
-                  )}
-                </div>
-
-                {/* Real-time Spectrum visualizer */}
-                <div className="w-full flex justify-center">
-                  <AudioVisualizer height={32} barWidth={3} gap={2} className="w-64 opacity-90" />
-                </div>
-
-                {/* Track Details */}
-                <div>
-                  <div className="flex items-center justify-center gap-2">
-                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight truncate">
-                      {currentTrack.title}
-                    </h2>
-                    {isYT ? (
-                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-red-600/30 text-red-300 border border-red-500/40 uppercase shrink-0 flex items-center gap-1">
-                        <Youtube className="w-3 h-3 fill-current" />
-                        YouTube
-                      </span>
-                    ) : (
-                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase shrink-0">
-                        320k
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-zinc-300 font-semibold truncate mt-1">
-                    {currentTrack.artist}
-                  </p>
-                </div>
-
-                {/* Scrubber & Timers */}
-                <div className="w-full space-y-1">
-                  <div className="relative group py-1 cursor-pointer">
-                    <div className="h-1.5 w-full bg-zinc-800/80 rounded-full overflow-hidden border border-white/5">
-                      <div
-                        className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-pink-500 rounded-full transition-all shadow-sm shadow-purple-500/50"
-                        style={{ width: `${progressPercent}%` }}
-                      ></div>
-                    </div>
-                    {(roomState.isHost || roomState.isDJ) && (
-                      <input
-                        type="range"
-                        min="0"
-                        max={duration || 100}
-                        step="0.1"
-                        value={currentTime}
-                        onChange={(e) => seekTo(parseFloat(e.target.value))}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                      />
-                    )}
-                  </div>
-                  <div className="flex justify-between text-[11px] font-mono text-zinc-400 font-semibold">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(duration)}</span>
-                  </div>
-                </div>
-
-                {/* DJ Playback Controls & Skip Forward / Vote Skip */}
-                <div className="flex items-center justify-center gap-4 pt-1 w-full">
-                  {/* Vote to Skip Button (for Everyone) */}
-                  <button
-                    onClick={voteSkip}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
-                      hasVotedSkip
-                        ? 'bg-purple-600/30 text-purple-300 border-purple-500/50'
-                        : 'glass-button text-zinc-300 hover:text-white'
-                    }`}
-                    title="Vote to skip current track"
-                  >
-                    <span>Vote Skip</span>
-                    <span className="text-[10px] bg-black/40 px-1.5 py-0.2 rounded-full font-mono">
-                      {roomState.skipVotes.length}/{skipThreshold}
-                    </span>
-                  </button>
-
-                  {/* DJ Playback Controls */}
-                  {roomState.isHost || roomState.isDJ ? (
-                    <div className="flex items-center gap-3">
-                      {/* Rewind 10s */}
-                      <button
-                        onClick={() => seekRelative(-10)}
-                        className="p-2 text-zinc-400 hover:text-white glass-button rounded-xl transition-all active:scale-95"
-                        title="Rewind 10s"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                      </button>
-
-                      {/* Prev Track */}
-                      <button
-                        onClick={prevTrack}
-                        className="p-2 text-zinc-300 hover:text-white glass-button rounded-xl transition-colors active:scale-95"
-                        title="Previous Track"
-                      >
-                        <SkipBack className="w-5 h-5 fill-current" />
-                      </button>
-
-                      {/* Play / Pause */}
-                      <button
-                        onClick={togglePlayPause}
-                        disabled={isLoading}
-                        className="w-13 h-13 rounded-full bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 text-white flex items-center justify-center shadow-xl shadow-purple-600/40 hover:scale-105 active:scale-95 transition-all border border-white/20"
-                        title={isPlaying ? 'Pause' : 'Play'}
-                      >
-                        {isLoading ? (
-                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                        ) : isPlaying ? (
-                          <Pause className="w-5 h-5 fill-current" />
-                        ) : (
-                          <Play className="w-5 h-5 fill-current ml-0.5" />
-                        )}
-                      </button>
-
-                      {/* Skip Forward Button (Guaranteed to work + Autoplay Next) */}
-                      <button
-                        onClick={nextTrack}
-                        className="p-2 text-zinc-300 hover:text-white glass-button rounded-xl transition-colors active:scale-95"
-                        title="Next Track (Skip Forward)"
-                      >
-                        <SkipForward className="w-5 h-5 fill-current" />
-                      </button>
-
-                      {/* Fast-forward 10s */}
-                      <button
-                        onClick={() => seekRelative(10)}
-                        className="p-2 text-zinc-400 hover:text-white glass-button rounded-xl transition-all active:scale-95"
-                        title="Skip forward 10s"
-                      >
-                        <RotateCw className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 text-xs text-purple-300 font-bold glass-panel px-3 py-1.5 rounded-full border-purple-500/30">
-                      <Radio className="w-3.5 h-3.5 animate-pulse text-purple-400" />
-                      <span>DJ: {roomState.activeDjName}</span>
-                    </div>
-                  )}
-
-                  {/* Autoplay Toggle on Stage */}
-                  {(roomState.isHost || roomState.isDJ) && (
-                    <button
-                      onClick={toggleAutoplay}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
-                        isAutoplay
-                          ? 'bg-red-500/20 text-red-300 border-red-500/40'
-                          : 'glass-button text-zinc-400 hover:text-zinc-200'
-                      }`}
-                      title={isAutoplay ? 'Autoplay Next is ON' : 'Autoplay Next is OFF'}
-                    >
-                      <div className={`w-2 h-2 rounded-full ${isAutoplay ? 'bg-red-400 animate-pulse' : 'bg-zinc-600'}`} />
-                      <span>Autoplay</span>
+                    <button className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-600/40 text-purple-200 border border-purple-500/30 hover:bg-purple-600 transition-all shrink-0">
+                      <Plus className="w-3 h-3" /> Queue
                     </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="relative z-10 text-center space-y-3 py-16">
-                <Music className="w-12 h-12 text-purple-400/50 mx-auto" />
-                <h3 className="text-lg font-black text-zinc-200">No Song Playing Right Now</h3>
-                <p className="text-xs text-zinc-400 max-w-xs mx-auto">
-                  {roomState.isHost || roomState.isDJ
-                    ? 'Search for any song, paste a direct YouTube link, or import Spotify below to start the party!'
-                    : 'Waiting for the DJ to queue a track...'}
-                </p>
-                <div className="pt-2 flex justify-center gap-3">
-                  <button
-                    onClick={() => setIsYouTubeModalOpen(true)}
-                    className="px-4 py-2 rounded-full bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-red-600/20"
-                  >
-                    <Youtube className="w-3.5 h-3.5 fill-current" />
-                    Paste YouTube Link
-                  </button>
-                </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Live Floating Reaction Buttons Dock (Mobile) */}
-          <div className="p-3 rounded-2xl glass-panel flex items-center justify-between gap-2 border border-white/10 sm:hidden">
-            <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-              React:
+          {/* Section: Now Playing Card (Matching Image 1) */}
+          <div className="shrink-0 space-y-1.5 pb-2">
+            <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+              Now playing
             </span>
-            <div className="flex items-center gap-1.5 flex-1 justify-around">
-              {emojis.map((emoji) => (
+            {currentTrack ? (
+              <div className="p-2.5 rounded-2xl bg-purple-500/[0.08] border border-purple-500/30 flex items-center gap-2.5 transition-all shadow-sm">
+                <div className="flex items-center gap-0.5 shrink-0 text-purple-400">
+                  <div className="w-0.5 h-3 bg-purple-400 rounded-full animate-soundwave" style={{ animationDelay: '0ms' }} />
+                  <div className="w-0.5 h-4 bg-purple-400 rounded-full animate-soundwave" style={{ animationDelay: '150ms' }} />
+                  <div className="w-0.5 h-2 bg-purple-400 rounded-full animate-soundwave" style={{ animationDelay: '300ms' }} />
+                </div>
+                <img
+                  src={currentTrack.image}
+                  alt={currentTrack.title}
+                  className="w-10 h-10 rounded-xl object-cover shadow-sm shrink-0 border border-white/10"
+                />
+                <div className="truncate flex-1">
+                  <p className="font-bold text-xs text-white truncate">{currentTrack.title}</p>
+                  <p className="text-[11px] text-zinc-400 truncate">{currentTrack.artist}</p>
+                </div>
+                <span className="text-[11px] font-mono text-zinc-400 font-semibold shrink-0">
+                  {formatTime(duration)}
+                </span>
+              </div>
+            ) : (
+              <div className="p-3 rounded-2xl glass-card text-center text-xs text-zinc-500">
+                No song currently playing
+              </div>
+            )}
+          </div>
+
+          {/* Section: Up Next Queue List (Matching Image 1) */}
+          <div className="flex-1 flex flex-col min-h-0 pt-2 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+                Up next
+              </span>
+              {queue.length > 0 && (roomState.isHost || roomState.isDJ) && (
                 <button
-                  key={emoji}
-                  onClick={() => sendReaction(emoji)}
-                  className="flex-1 py-1.5 rounded-xl glass-button text-xl hover:scale-125 active:scale-95 transition-all flex items-center justify-center"
-                  title={`React ${emoji}`}
-                  aria-label={`React ${emoji}`}
+                  onClick={clearQueue}
+                  className="text-[10px] text-zinc-500 hover:text-rose-400 transition-colors flex items-center gap-0.5"
                 >
-                  {emoji}
+                  <Trash2 className="w-2.5 h-2.5" /> Clear
                 </button>
-              ))}
+              )}
             </div>
-          </div>
-        </div>
 
-        {/* RIGHT: Shared Democratic Queue & Live Party Chat (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col glass-panel rounded-3xl overflow-hidden shadow-2xl h-[580px] lg:h-auto border border-white/10">
-          {/* Frosted Glassmorphism Tab Switcher with Minimalist Symbols & Emojis */}
-          <div className="p-2.5 border-b border-white/10 bg-black/30">
-            <div className="p-1 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center gap-1.5 shadow-inner">
-              <button
-                onClick={() => setActiveTab('queue')}
-                className={`flex-1 py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all duration-200 ${
-                  activeTab === 'queue'
-                    ? 'bg-white/15 text-white border border-white/20 shadow-md'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
-                }`}
-              >
-                <span className="text-sm">🎵</span>
-                <span>Queue</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-white/10 border border-white/10 text-zinc-300">
-                  {queue.length}
-                </span>
-              </button>
-              <button
-                onClick={() => setActiveTab('chat')}
-                className={`flex-1 py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all duration-200 ${
-                  activeTab === 'chat'
-                    ? 'bg-white/15 text-white border border-white/20 shadow-md'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
-                }`}
-              >
-                <span className="text-sm">💬</span>
-                <span>Chat</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-white/10 border border-white/10 text-zinc-300">
-                  {messages.length}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* TAB 1: SHARED QUEUE */}
-          {activeTab === 'queue' && (
-            <div className="flex-1 flex flex-col p-4 overflow-hidden space-y-3">
-              {/* Quick Search & Direct YouTube input inside room */}
-              <div className="relative flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-                  <input
-                    type="text"
-                    value={roomSearchQuery}
-                    onChange={(e) => setRoomSearchQuery(e.target.value)}
-                    placeholder="Search song or paste YouTube link..."
-                    className="w-full glass-input rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none transition-all font-medium"
-                  />
-                  {isRoomSearching && (
-                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-purple-400" />
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+              {queue.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-2 text-zinc-500">
+                  <p className="text-xs text-zinc-400 font-medium">
+                    Nothing up next. Add a song or let autoplay pick.
+                  </p>
+                  {isAutoplay && autoplayTrack && (
+                    <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5 w-full text-left">
+                      <span className="text-[9px] uppercase font-bold text-red-400 block mb-0.5">
+                        Autoplay continuous:
+                      </span>
+                      <p className="text-xs font-bold text-zinc-300 truncate">{autoplayTrack.title}</p>
+                      <p className="text-[10px] text-zinc-500 truncate">{autoplayTrack.artist}</p>
+                    </div>
                   )}
                 </div>
-
-                <button
-                  onClick={() => setIsYouTubeModalOpen(true)}
-                  className="p-2 rounded-xl bg-red-600/20 text-red-300 border border-red-500/40 hover:bg-red-600/30 transition-all shrink-0"
-                  title="Direct YouTube input modal"
-                >
-                  <Youtube className="w-4 h-4 fill-current text-red-400" />
-                </button>
-              </div>
-
-              {/* Search dropdown results */}
-              {roomSearchResults.length > 0 && (
-                <div className="max-h-48 overflow-y-auto glass-panel border-purple-500/30 rounded-2xl p-1.5 space-y-1 shadow-2xl">
-                  {roomSearchResults.map((t) => (
+              ) : (
+                queue.map((track, idx) => {
+                  const trackIsYT = track.source === 'youtube' || Boolean(track.youtubeId);
+                  return (
                     <div
-                      key={t.id}
-                      onClick={() => {
-                        addToRoomQueue(t);
-                        setRoomSearchQuery('');
-                        setRoomSearchResults([]);
-                      }}
-                      className="flex items-center justify-between p-2 rounded-xl hover:bg-white/10 cursor-pointer transition-colors text-xs"
+                      key={`${track.id}-${idx}`}
+                      className="group flex items-center justify-between p-2 rounded-2xl glass-card border-white/5 hover:border-white/15 transition-all text-xs"
                     >
-                      <div className="flex items-center gap-2 truncate flex-1">
-                        <img src={t.image} alt={t.title} className="w-8 h-8 rounded-lg object-cover" />
+                      <div
+                        className="flex items-center gap-2 truncate flex-1 cursor-pointer"
+                        onClick={() => {
+                          if (roomState.isHost || roomState.isDJ) {
+                            playTrack(track, queue.filter((_, i) => i !== idx));
+                          }
+                        }}
+                      >
+                        <span className="text-zinc-500 w-3 text-center font-mono text-[11px] font-bold">
+                          {idx + 1}
+                        </span>
+                        <img
+                          src={track.image}
+                          alt={track.title}
+                          className="w-8 h-8 rounded-lg object-cover shrink-0"
+                        />
                         <div className="truncate">
-                          <p className="font-bold text-zinc-200 truncate">{t.title}</p>
-                          <p className="text-[10px] text-zinc-400 truncate">{t.artist}</p>
+                          <div className="flex items-center gap-1">
+                            <p className="font-bold text-zinc-200 truncate group-hover:text-purple-300">
+                              {track.title}
+                            </p>
+                            {trackIsYT && (
+                              <Youtube className="w-3 h-3 text-red-400 fill-current shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-[10px] text-zinc-400 truncate">
+                            {track.artist}
+                          </p>
                         </div>
                       </div>
-                      <button className="flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg bg-purple-600/30 text-purple-300 border border-purple-500/30 hover:bg-purple-600 hover:text-white transition-all">
-                        <Plus className="w-3 h-3" /> Queue
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
 
-              {/* Queue List */}
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                {queue.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center text-zinc-500 space-y-2 py-12">
-                    <ListMusic className="w-8 h-8 opacity-30 text-purple-400" />
-                    <p className="text-xs font-semibold text-zinc-400">The room queue is empty.</p>
-                    <p className="text-[11px] text-zinc-500">
-                      Search above, paste a YouTube link, or import Spotify!
-                    </p>
-                    {isAutoplay && autoplayTrack && (
-                      <div className="mt-3 p-2.5 rounded-xl glass-card border-red-500/20 max-w-xs text-left">
-                        <span className="text-[9px] uppercase font-bold text-red-400 block mb-1">
-                          Up Next (Autoplay Continuous):
-                        </span>
-                        <p className="text-xs font-bold text-zinc-200 truncate">{autoplayTrack.title}</p>
-                        <p className="text-[10px] text-zinc-400 truncate">{autoplayTrack.artist}</p>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => upvoteTrack(track.id)}
+                          className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg glass-button text-zinc-300 hover:text-purple-300 text-[10px] font-mono"
+                          title="Upvote song"
+                        >
+                          <Flame className="w-2.5 h-2.5 text-pink-500" />
+                          <span>{track.votes || 0}</span>
+                        </button>
+                        {(roomState.isHost || roomState.isDJ) && (
+                          <button
+                            onClick={() => removeFromQueue(idx)}
+                            className="p-1 text-zinc-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remove"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Left Column Stats (Matching Image 1) */}
+          <div className="pt-2.5 border-t border-white/10 shrink-0 flex items-center justify-between text-xs text-zinc-400">
+            <span className="font-mono text-[11px]">
+              {totalPeers} in session / {formatTime(duration)}
+            </span>
+            <button
+              onClick={toggleAutoplay}
+              className={`flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border transition-all ${
+                isAutoplay
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                  : 'text-zinc-500 border-white/5 hover:text-zinc-300'
+              }`}
+              title="Autoplay recommended tracks when queue ends"
+            >
+              <Sparkles className="w-3 h-3 text-purple-400" />
+              <span>Autoplay</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* ======================================================== */}
+        {/* COLUMN 2 (CENTER): NOW PLAYING STAGE & CONTROLS (6 Cols) */}
+        {/* ======================================================== */}
+        <section
+          className={`lg:col-span-6 flex flex-col h-full justify-between glass-panel rounded-3xl overflow-hidden border border-white/10 relative transition-all ${
+            mobileTab === 'stage' ? 'flex' : 'hidden lg:flex'
+          }`}
+          style={stageGradientStyle}
+        >
+          {/* Stage Top Bar (Matching Image 1 Reference) */}
+          <div className="w-full flex items-center justify-between text-xs text-zinc-400 z-10 px-4 pt-3 pb-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="font-bold text-emerald-400 text-[11px] tracking-wider uppercase">
+                Now playing
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-black/40 border border-white/10 text-zinc-300 font-mono text-[11px]">
+                Sync 38 ms
+              </span>
+              <button
+                onClick={() => setViewMode(viewMode === 'artwork' ? 'vinyl' : 'artwork')}
+                className="px-2 py-0.5 rounded-full glass-button text-[11px] font-bold flex items-center gap-1 hover:text-white"
+                title="Toggle Artwork / Vinyl mode"
+              >
+                {viewMode === 'artwork' ? '💽 Vinyl' : '🖼️ Cover'}
+              </button>
+              <button
+                onClick={() => setMobileTab('chat')}
+                className="lg:hidden p-1 rounded-full glass-button text-zinc-400 hover:text-white"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Stage Floating Reactions Dock (Vertical on Right - Exact Image 1 Match) */}
+          <div className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-2 p-1.5 rounded-full glass-panel-subtle border border-white/15 shadow-2xl backdrop-blur-md">
+            {emojis.map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => sendReaction(emoji)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm sm:text-base hover:scale-125 active:scale-90 hover:bg-white/15 transition-all"
+                title={`React ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+
+          {/* Stage Center: Large Squircle Album Art or Vinyl Mode */}
+          <div className="flex-1 flex flex-col items-center justify-center p-3 relative z-10 my-auto">
+            {currentTrack ? (
+              <div className="flex flex-col items-center space-y-4">
+                {viewMode === 'artwork' ? (
+                  /* Large Squircle Cover Art (Exact Match to Image 1) */
+                  <div className="relative group">
+                    <img
+                      src={currentTrack.image}
+                      alt={currentTrack.title}
+                      className="w-52 h-52 sm:w-64 sm:h-64 md:w-72 md:h-72 rounded-3xl sm:rounded-[32px] object-cover shadow-[0_24px_50px_-12px_rgba(0,0,0,0.85)] border-2 border-white/15 transition-transform duration-500 group-hover:scale-105"
+                    />
+                    {isPlaying && (
+                      <div
+                        className="absolute -inset-4 rounded-3xl -z-10 pointer-events-none opacity-40 blur-xl"
+                        style={{ background: palette.primary }}
+                      />
                     )}
                   </div>
                 ) : (
-                  queue.map((track, idx) => {
-                    const trackIsYT = track.source === 'youtube' || Boolean(track.youtubeId);
-                    return (
-                      <div
-                        key={`${track.id}-${idx}`}
-                        className="group flex items-center justify-between p-2 rounded-2xl glass-card border-white/5 hover:border-white/15 transition-all text-xs"
-                      >
-                        <div
-                          className="flex items-center gap-2.5 truncate flex-1 cursor-pointer"
-                          onClick={() => {
-                            if (roomState.isHost || roomState.isDJ) {
-                              playTrack(track, queue.filter((_, i) => i !== idx));
-                            }
-                          }}
-                        >
-                          <span className="text-zinc-500 w-4 text-center font-mono font-bold">{idx + 1}</span>
-                          <img src={track.image} alt={track.title} className="w-8 h-8 rounded-lg object-cover" />
-                          <div className="truncate">
-                            <div className="flex items-center gap-1">
-                              <p className="font-bold text-zinc-200 truncate group-hover:text-purple-300">
-                                {track.title}
-                              </p>
-                              {trackIsYT && (
-                                <Youtube className="w-3 h-3 text-red-400 fill-current shrink-0" />
-                              )}
-                            </div>
-                            <p className="text-[10px] text-zinc-400 truncate">
-                              {track.artist} {track.addedBy && `• added by ${track.addedBy}`}
-                            </p>
-                          </div>
-                        </div>
+                  /* Spinning Vinyl Record Mode */
+                  <div
+                    className={`w-48 h-48 sm:w-60 sm:h-60 rounded-full bg-zinc-950 p-2 shadow-2xl border-4 border-white/15 flex items-center justify-center ${
+                      isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
+                    }`}
+                  >
+                    <div className="w-full h-full rounded-full border border-white/10 flex items-center justify-center p-2.5 relative overflow-hidden">
+                      <div className="absolute inset-0 rounded-full border border-white/5 scale-90"></div>
+                      <div className="absolute inset-0 rounded-full border border-white/5 scale-75"></div>
+                      <img
+                        src={currentTrack.image}
+                        alt={currentTrack.title}
+                        className="w-24 h-24 sm:w-32 sm:h-32 rounded-full object-cover shadow-2xl border-2 border-white/30"
+                      />
+                      <div className="absolute w-4 h-4 rounded-full bg-zinc-950 border-2 border-zinc-600"></div>
+                    </div>
+                  </div>
+                )}
 
-                        {/* Right: Upvote button & Remove button */}
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => upvoteTrack(track.id)}
-                            className="flex items-center gap-1 px-2 py-1 rounded-xl glass-button hover:bg-purple-600/30 text-zinc-300 hover:text-purple-300 border-white/10 transition-all text-[11px]"
-                            title="Upvote song to move it up in queue"
-                          >
-                            <Flame className="w-3 h-3 text-pink-500" />
-                            <span>{track.votes || 0}</span>
-                          </button>
+                {/* Real-time Spectrum Audio Visualizer */}
+                <div className="w-full flex justify-center pt-1">
+                  <AudioVisualizer height={26} barWidth={3} gap={2} className="w-56 opacity-80" />
+                </div>
+              </div>
+            ) : (
+              <div className="text-center space-y-3 py-12">
+                <Music className="w-12 h-12 text-purple-400/40 mx-auto" />
+                <h3 className="text-lg font-black text-zinc-200">No Song Playing Right Now</h3>
+                <p className="text-xs text-zinc-400 max-w-xs mx-auto">
+                  Paste a direct YouTube link or search on the left to start the party!
+                </p>
+                <button
+                  onClick={() => setIsYouTubeModalOpen(true)}
+                  className="px-4 py-2 rounded-full bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 text-xs font-bold inline-flex items-center gap-1.5 transition-all shadow-md shadow-red-600/20"
+                >
+                  <Youtube className="w-3.5 h-3.5 fill-current" />
+                  Paste YouTube Link
+                </button>
+              </div>
+            )}
+          </div>
 
-                          {(roomState.isHost || roomState.isDJ) && (
-                            <button
-                              onClick={() => removeFromQueue(idx)}
-                              className="p-1 text-zinc-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
+          {/* Stage Bottom Player Controls Card (Matching Image 1 Reference) */}
+          <div className="p-3 sm:p-4 rounded-2xl glass-panel-subtle border-t border-white/10 bg-black/40 backdrop-blur-xl shrink-0 z-20 space-y-2">
+            {/* Scrubber & Track Title Row */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              {/* Mini Art & Track Details (Left) */}
+              <div className="flex items-center gap-2.5 truncate w-full sm:w-auto">
+                {currentTrack ? (
+                  <>
+                    <img
+                      src={currentTrack.image}
+                      alt={currentTrack.title}
+                      className="w-10 h-10 rounded-xl object-cover shrink-0 border border-white/10"
+                    />
+                    <div className="truncate flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="font-black text-sm text-white truncate">{currentTrack.title}</h3>
+                        {isYT && (
+                          <span className="text-[9px] font-black px-1.5 py-0.2 rounded-full bg-red-600/30 text-red-300 border border-red-500/40 uppercase shrink-0 flex items-center gap-1">
+                            <Youtube className="w-2.5 h-2.5 fill-current" /> YT
+                          </span>
+                        )}
                       </div>
-                    );
-                  })
+                      <p className="text-xs text-zinc-400 font-medium truncate">{currentTrack.artist}</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-zinc-500 font-medium">Idle</div>
                 )}
               </div>
 
-              {/* Queue Footer */}
-              {queue.length > 0 && (roomState.isHost || roomState.isDJ) && (
-                <div className="pt-2 border-t border-white/10 flex justify-end">
-                  <button
-                    onClick={clearQueue}
-                    className="text-[11px] text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1 font-semibold"
-                  >
-                    <Trash2 className="w-3 h-3" /> Clear Queue
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: PARTY CHAT */}
-          {activeTab === 'chat' && (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 text-xs">
-                {messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${
-                      m.isSystem ? 'items-center text-zinc-400 italic py-1 text-center' : 'items-start'
-                    }`}
-                  >
-                    {!m.isSystem && (
-                      <span className="text-[10px] font-bold text-purple-400">
-                        {m.sender}
-                      </span>
-                    )}
-                    <span
-                      className={`${
-                        m.isSystem
-                          ? 'text-[11px] glass-panel-subtle px-3 py-1 rounded-full border border-white/10'
-                          : 'glass-card border-white/10 text-zinc-100 px-3 py-1.5 rounded-2xl mt-0.5 max-w-[85%]'
-                      }`}
-                    >
-                      {m.text}
-                    </span>
+              {/* Scrubber Line (Right) */}
+              <div className="w-full sm:flex-1 sm:max-w-md flex items-center gap-2 text-xs font-mono text-zinc-400">
+                <span className="w-8 text-right text-[11px]">{formatTime(currentTime)}</span>
+                <div className="relative flex-1 py-1 cursor-pointer">
+                  <div className="h-1.5 w-full bg-zinc-800/90 rounded-full overflow-hidden border border-white/5">
+                    <div
+                      className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                      style={{ width: `${progressPercent}%` }}
+                    />
                   </div>
-                ))}
-                <div ref={chatEndRef} />
+                  {(roomState.isHost || roomState.isDJ) && (
+                    <input
+                      type="range"
+                      min="0"
+                      max={duration || 100}
+                      step="0.1"
+                      value={currentTime}
+                      onChange={(e) => seekTo(parseFloat(e.target.value))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  )}
+                </div>
+                <span className="w-8 text-[11px]">{formatTime(duration)}</span>
+              </div>
+            </div>
+
+            {/* Playback Controls Row (Matching Image 1) */}
+            <div className="flex items-center justify-between pt-1">
+              {/* Left Group: Heart & Shuffle */}
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button
+                  onClick={() => setIsLiked(!isLiked)}
+                  className={`p-2 rounded-xl transition-all ${
+                    isLiked ? 'text-pink-500 hover:text-pink-400' : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title={isLiked ? 'Liked' : 'Like'}
+                >
+                  <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : ''}`} />
+                </button>
+                <button
+                  onClick={toggleShuffle}
+                  className={`p-2 rounded-xl transition-all ${
+                    isShuffle ? 'text-purple-400' : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title="Shuffle"
+                >
+                  <Shuffle className="w-4 h-4" />
+                </button>
               </div>
 
-              {/* Chat input */}
-              <form onSubmit={handleSendChat} className="p-3 border-t border-white/10 bg-black/30 flex gap-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Drop a message to everyone in this room..."
-                  className="flex-1 glass-input rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
-                />
+              {/* Center Group: Prev, -5, Big Purple Play Button, +5, Next */}
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
-                  type="submit"
-                  className="p-2.5 glass-button rounded-xl text-purple-300 hover:text-white hover:bg-purple-600/30 border border-white/10 hover:border-purple-500/30 transition-all shadow-md active:scale-95"
-                  title="Send message"
-                  aria-label="Send"
+                  onClick={prevTrack}
+                  disabled={!roomState.isHost && !roomState.isDJ}
+                  className="p-2 text-zinc-300 hover:text-white glass-button rounded-xl transition-all active:scale-95 disabled:opacity-40"
+                  title="Previous Track"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  <SkipBack className="w-4 h-4 fill-current" />
                 </button>
-              </form>
+
+                <button
+                  onClick={() => seekRelative(-5)}
+                  disabled={!roomState.isHost && !roomState.isDJ}
+                  className="px-2 py-1 text-zinc-400 hover:text-white glass-button rounded-xl transition-all active:scale-95 text-[11px] font-mono font-bold disabled:opacity-40"
+                  title="Rewind 5s"
+                >
+                  -5
+                </button>
+
+                {/* Big Circular Purple Play/Pause Button (Image 1 Signature) */}
+                <button
+                  onClick={togglePlayPause}
+                  disabled={isLoading || (!roomState.isHost && !roomState.isDJ)}
+                  className="w-12 h-12 rounded-full bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/40 hover:scale-105 active:scale-95 transition-all border border-white/20 disabled:opacity-50"
+                  title={isPlaying ? 'Pause' : 'Play'}
+                >
+                  {isLoading ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  ) : isPlaying ? (
+                    <Pause className="w-5 h-5 fill-current" />
+                  ) : (
+                    <Play className="w-5 h-5 fill-current ml-0.5" />
+                  )}
+                </button>
+
+                <button
+                  onClick={() => seekRelative(5)}
+                  disabled={!roomState.isHost && !roomState.isDJ}
+                  className="px-2 py-1 text-zinc-400 hover:text-white glass-button rounded-xl transition-all active:scale-95 text-[11px] font-mono font-bold disabled:opacity-40"
+                  title="Forward 5s"
+                >
+                  +5
+                </button>
+
+                <button
+                  onClick={nextTrack}
+                  disabled={!roomState.isHost && !roomState.isDJ}
+                  className="p-2 text-zinc-300 hover:text-white glass-button rounded-xl transition-all active:scale-95 disabled:opacity-40"
+                  title="Next Track (Skip Forward)"
+                >
+                  <SkipForward className="w-4 h-4 fill-current" />
+                </button>
+              </div>
+
+              {/* Right Group: Repeat & Volume */}
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button
+                  onClick={cyclePlayMode}
+                  className={`p-2 rounded-xl transition-all ${
+                    playMode !== 'none' ? 'text-purple-400' : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title={`Repeat: ${playMode}`}
+                >
+                  <Repeat className="w-4 h-4" />
+                </button>
+
+                {/* Vote Skip */}
+                <button
+                  onClick={voteSkip}
+                  className={`px-2 py-1 rounded-xl text-[10px] font-bold border transition-all ${
+                    hasVotedSkip
+                      ? 'bg-purple-600/30 text-purple-300 border-purple-500/50'
+                      : 'glass-button text-zinc-400 hover:text-white'
+                  }`}
+                  title="Vote to skip"
+                >
+                  <span>Skip</span>{' '}
+                  <span className="font-mono">
+                    {roomState.skipVotes.length}/{skipThreshold}
+                  </span>
+                </button>
+
+                {/* Volume Slider */}
+                <div className="hidden sm:flex items-center gap-1.5 pl-1">
+                  <button
+                    onClick={toggleMute}
+                    className="p-1 text-zinc-400 hover:text-white transition-colors"
+                  >
+                    {isMuted || volume === 0 ? (
+                      <VolumeX className="w-4 h-4 text-rose-400" />
+                    ) : volume < 0.5 ? (
+                      <Volume1 className="w-4 h-4" />
+                    ) : (
+                      <Volume2 className="w-4 h-4" />
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.02"
+                    value={isMuted ? 0 : volume}
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="w-16 h-1 bg-zinc-700 rounded-full appearance-none cursor-pointer accent-purple-500"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ======================================================== */}
+        {/* COLUMN 3 (RIGHT): ROOM CHAT & PARTICIPANTS (3 Cols)      */}
+        {/* ======================================================== */}
+        <aside
+          className={`lg:col-span-3 flex-col h-full glass-panel rounded-3xl overflow-hidden border border-white/10 relative transition-all ${
+            mobileTab === 'chat' ? 'flex' : 'hidden lg:flex'
+          }`}
+        >
+          {/* Header: User avatar & 1 in the room (Matching Image 1) */}
+          <div className="p-3 border-b border-white/10 flex items-center justify-between bg-black/20 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-pink-500 p-0.5 flex items-center justify-center">
+                <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center font-bold text-xs text-white">
+                  {roomState.userName.slice(0, 1).toUpperCase()}
+                </div>
+              </div>
+              <div>
+                <p className="font-bold text-xs text-white">
+                  {totalPeers} in the room
+                </p>
+                <p className="text-[10px] text-zinc-400">
+                  {roomState.auxMode === 'open-aux' ? 'Open booth' : `DJ: ${roomState.activeDjName}`}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsPeersOpen(!isPeersOpen)}
+              className="w-7 h-7 rounded-full glass-button flex items-center justify-center text-zinc-400 hover:text-white"
+              title="View room members"
+            >
+              <Users className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Members Overlay Drawer */}
+          {isPeersOpen && (
+            <div className="p-2 border-b border-white/10 bg-black/40 space-y-1 max-h-36 overflow-y-auto">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 px-2 block">
+                Connected Friends ({roomState.peers.length})
+              </span>
+              {roomState.peers.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between px-2 py-1 rounded-xl glass-card text-xs"
+                >
+                  <span className="font-medium text-zinc-200">{p.name}</span>
+                  {p.isHost ? (
+                    <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1">
+                      <Crown className="w-3 h-3" /> Host
+                    </span>
+                  ) : p.name === roomState.activeDjName ? (
+                    <span className="text-[10px] text-purple-400 font-bold flex items-center gap-1">
+                      <Disc3 className="w-3 h-3 animate-spin" /> DJ
+                    </span>
+                  ) : null}
+                </div>
+              ))}
             </div>
           )}
-        </div>
+
+          {/* Chat Messages Body (Matching Image 1) */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-2 text-zinc-500">
+                <MessageSquare className="w-10 h-10 opacity-30 text-purple-400" />
+                <p className="text-sm font-bold text-zinc-300">No messages yet</p>
+                <p className="text-xs text-zinc-500">Start the conversation!</p>
+              </div>
+            ) : (
+              messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`flex flex-col ${
+                    m.isSystem ? 'items-center text-zinc-400 italic py-1 text-center' : 'items-start'
+                  }`}
+                >
+                  {!m.isSystem && (
+                    <span className="text-[10px] font-bold text-purple-400 mb-0.5">
+                      {m.sender}
+                    </span>
+                  )}
+                  <span
+                    className={`${
+                      m.isSystem
+                        ? 'text-[11px] glass-panel-subtle px-3 py-1 rounded-full border border-white/10'
+                        : 'glass-card border-white/10 text-zinc-100 px-3 py-1.5 rounded-2xl max-w-[90%]'
+                    }`}
+                  >
+                    {m.text}
+                  </span>
+                </div>
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Quick Chat Emoji Picker Popup */}
+          {isEmojiPickerOpen && (
+            <div className="p-2 border-t border-white/10 bg-black/60 flex items-center justify-around gap-1">
+              {quickChatEmojis.map((em) => (
+                <button
+                  key={em}
+                  onClick={() => {
+                    setChatInput((prev) => prev + em);
+                    setIsEmojiPickerOpen(false);
+                  }}
+                  className="text-base hover:scale-125 transition-transform p-1"
+                >
+                  {em}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Chat Input Bar (Matching Image 1) */}
+          <form
+            onSubmit={handleSendChat}
+            className="p-2.5 border-t border-white/10 bg-black/40 flex items-center gap-1.5 shrink-0"
+          >
+            <button
+              type="button"
+              onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)}
+              className="p-2 rounded-xl text-zinc-400 hover:text-white glass-button transition-colors"
+              title="Add Emoji"
+            >
+              <Smile className="w-4 h-4" />
+            </button>
+
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Type a message..."
+              className="flex-1 glass-input rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
+            />
+
+            <button
+              type="submit"
+              disabled={!chatInput.trim()}
+              className="p-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-md active:scale-95 disabled:opacity-40"
+              title="Send message"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        </aside>
       </main>
 
       {/* Direct YouTube Modal in Room */}

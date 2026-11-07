@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { X, Trash2, ListMusic, Music, History, Play, Sparkles } from 'lucide-react';
+import { X, Trash2, ListMusic, Music, History, Play, Sparkles, Plus, Loader2 } from 'lucide-react';
 import { YoutubeIcon as Youtube } from './YoutubeIcon';
 import { usePlayer } from '../context/PlayerContext';
+import { useRoom } from '../context/RoomContext';
+import { extractYouTubeId, fetchYouTubeTrack, searchTracks } from '../services/api';
 
 interface QueueDrawerProps {
   isOpen: boolean;
@@ -16,11 +18,51 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({ isOpen, onClose }) => 
     isAutoplay,
     autoplayTrack,
     toggleAutoplay,
+    addToQueue,
     removeFromQueue,
     clearQueue,
     playTrack,
   } = usePlayer();
+  const { roomState, addToRoomQueue } = useRoom();
   const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue');
+  const [quickInput, setQuickInput] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
+
+  const handleQuickAdd = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const query = quickInput.trim();
+    if (!query) return;
+
+    setIsAdding(true);
+    try {
+      const ytId = extractYouTubeId(query);
+      if (ytId) {
+        const track = await fetchYouTubeTrack(query);
+        if (track) {
+          if (roomState.connected) {
+            addToRoomQueue(track);
+          } else {
+            addToQueue(track);
+          }
+          setQuickInput('');
+          return;
+        }
+      }
+      const results = await searchTracks(query);
+      if (results.length > 0) {
+        if (roomState.connected) {
+          addToRoomQueue(results[0]);
+        } else {
+          addToQueue(results[0]);
+        }
+        setQuickInput('');
+      }
+    } catch (err) {
+      console.error('Quick add error:', err);
+    } finally {
+      setIsAdding(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -115,6 +157,26 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({ isOpen, onClose }) => 
 
         {activeTab === 'queue' ? (
           <div>
+            {/* Quick Add To Queue Form */}
+            <form onSubmit={handleQuickAdd} className="mb-4">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={quickInput}
+                  onChange={(e) => setQuickInput(e.target.value)}
+                  placeholder="Paste YouTube link or search..."
+                  className="flex-1 glass-input rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={isAdding || !quickInput.trim()}
+                  className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                >
+                  {isAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Plus className="w-3.5 h-3.5" /> Queue</>}
+                </button>
+              </div>
+            </form>
+
             <div className="flex items-center justify-between text-xs text-zinc-400 mb-2 font-medium">
               <span>Next In Line</span>
               {queue.length > 0 && (

@@ -7,9 +7,17 @@ export function extractYouTubeId(urlOrId: string): string | null {
     return str;
   }
   const match = str.match(
-    /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/
+    /(?:(?:youtube|music\.youtube|m\.youtube)\.com\/(?:watch\?.*v=|embed\/|v\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
   );
-  return match ? match[1] : null;
+  if (match) return match[1];
+
+  try {
+    const url = new URL(str.startsWith('http') ? str : `https://${str}`);
+    const v = url.searchParams.get('v');
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+  } catch {}
+
+  return null;
 }
 
 export async function fetchYouTubeTrack(urlOrId: string): Promise<Track | null> {
@@ -70,22 +78,11 @@ export async function searchTracks(query: string): Promise<Track[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  // If query is a YouTube link, resolve it directly!
+  // If query is a YouTube link, resolve it directly with instant response!
   const ytId = extractYouTubeId(trimmed);
   if (ytId) {
     const ytTrack = await fetchYouTubeTrack(trimmed);
     if (ytTrack) {
-      // Also fetch related title search from JioSaavn
-      try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(ytTrack.title)}`);
-        if (res.ok) {
-          const data = await res.json();
-          const moreTracks = data.tracks || [];
-          return [ytTrack, ...moreTracks.filter((t: Track) => t.id !== ytTrack.id)];
-        }
-      } catch (e) {
-        // Return at least the ytTrack
-      }
       return [ytTrack];
     }
   }

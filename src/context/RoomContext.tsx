@@ -196,7 +196,11 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // When a friend asks to add a song to the shared queue
     roomSync.onQueueAddRequested = (track: Track, sender: string) => {
       const enriched = { ...track, addedBy: sender, votes: 0 };
-      player.addToQueue(enriched);
+      if (!player.currentTrack) {
+        player.playTrack(enriched);
+      } else {
+        player.addToQueue(enriched);
+      }
       const queueMsg: RoomMessage = {
         id: `msg-${Date.now()}-${Math.random()}`,
         sender: 'AuxParty',
@@ -204,23 +208,36 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timestamp: Date.now(),
         isSystem: true,
       };
-      roomSync.broadcast({ type: 'CHAT', message: queueMsg });
       setMessages((prev) => [...prev, queueMsg]);
+      if (roomState.isHost) {
+        const nextQueue = player.currentTrack ? [...player.queue, enriched] : [];
+        roomSync.broadcast({ type: 'QUEUE_UPDATE', queue: nextQueue });
+        roomSync.broadcast({ type: 'CHAT', message: queueMsg });
+      }
     };
 
     // When a friend asks to add multiple songs
     roomSync.onQueueAddManyRequested = (tracks: Track[], sender: string) => {
       const enriched = tracks.map((t) => ({ ...t, addedBy: sender, votes: 0 }));
-      enriched.forEach((t) => player.addToQueue(t));
+      if (!player.currentTrack && enriched.length > 0) {
+        const [first, ...rest] = enriched;
+        player.playTrack(first, rest);
+      } else {
+        enriched.forEach((t) => player.addToQueue(t));
+      }
       const queueMsg: RoomMessage = {
         id: `msg-${Date.now()}-${Math.random()}`,
         sender: 'AuxParty',
-        text: `${sender} queued ${tracks.length} tracks from Spotify! 🟢`,
+        text: `${sender} queued ${tracks.length} tracks! 🟢`,
         timestamp: Date.now(),
         isSystem: true,
       };
-      roomSync.broadcast({ type: 'CHAT', message: queueMsg });
       setMessages((prev) => [...prev, queueMsg]);
+      if (roomState.isHost) {
+        const nextQueue = player.currentTrack ? [...player.queue, ...enriched] : enriched.slice(1);
+        roomSync.broadcast({ type: 'QUEUE_UPDATE', queue: nextQueue });
+        roomSync.broadcast({ type: 'CHAT', message: queueMsg });
+      }
     };
 
     roomSync.onError = (errMsg: string) => {
@@ -409,37 +426,66 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addToRoomQueue = (track: Track) => {
     const enriched = { ...track, addedBy: roomState.userName, votes: 0 };
-    if (roomState.isHost) {
-      player.addToQueue(enriched);
-      const msg: RoomMessage = {
-        id: `msg-${Date.now()}-${Math.random()}`,
-        sender: 'AuxParty',
-        text: `${roomState.userName} queued "${track.title}" 🎵`,
-        timestamp: Date.now(),
-        isSystem: true,
-      };
-      setMessages((prev) => [...prev, msg]);
-      roomSync.broadcast({ type: 'CHAT', message: msg });
+    
+    // Immediate local feedback
+    if (!player.currentTrack) {
+      player.playTrack(enriched);
     } else {
-      roomSync.requestAddToQueue(enriched);
+      player.addToQueue(enriched);
+    }
+
+    const msg: RoomMessage = {
+      id: `msg-${Date.now()}-${Math.random()}`,
+      sender: 'AuxParty',
+      text: `${roomState.userName} queued "${track.title}" 🎵`,
+      timestamp: Date.now(),
+      isSystem: true,
+    };
+    setMessages((prev) => [...prev, msg]);
+
+    if (roomState.connected) {
+      const nextQueue = player.currentTrack ? [...player.queue, enriched] : [];
+      roomSync.broadcast({ type: 'QUEUE_UPDATE', queue: nextQueue });
+      roomSync.broadcast({ type: 'CHAT', message: msg });
+      if (!player.currentTrack && (roomState.isHost || roomState.isDJ || roomState.auxMode === 'open-aux')) {
+        roomSync.broadcastPlayback(enriched, true, 0, nextQueue);
+      } else if (!roomState.isHost) {
+        roomSync.requestAddToQueue(enriched);
+      }
     }
   };
 
   const addManyToRoomQueue = (tracks: Track[]) => {
     const enriched = tracks.map((t) => ({ ...t, addedBy: roomState.userName, votes: 0 }));
-    if (roomState.isHost) {
-      enriched.forEach((t) => player.addToQueue(t));
-      const msg: RoomMessage = {
-        id: `msg-${Date.now()}-${Math.random()}`,
-        sender: 'AuxParty',
-        text: `${roomState.userName} queued ${tracks.length} tracks from Spotify! 🟢`,
-        timestamp: Date.now(),
-        isSystem: true,
-      };
-      setMessages((prev) => [...prev, msg]);
-      roomSync.broadcast({ type: 'CHAT', message: msg });
+    if (enriched.length === 0) return;
+
+    let nextQueue = [...player.queue];
+    if (!player.currentTrack) {
+      const [first, ...rest] = enriched;
+      player.playTrack(first, rest);
+      nextQueue = rest;
     } else {
-      roomSync.requestAddManyToQueue(enriched);
+      enriched.forEach((t) => player.addToQueue(t));
+      nextQueue = [...player.queue, ...enriched];
+    }
+
+    const msg: RoomMessage = {
+      id: `msg-${Date.now()}-${Math.random()}`,
+      sender: 'AuxParty',
+      text: `${roomState.userName} queued ${tracks.length} tracks! 🟢`,
+      timestamp: Date.now(),
+      isSystem: true,
+    };
+    setMessages((prev) => [...prev, msg]);
+
+    if (roomState.connected) {
+      roomSync.broadcast({ type: 'QUEUE_UPDATE', queue: nextQueue });
+      roomSync.broadcast({ type: 'CHAT', message: msg });
+      if (!player.currentTrack && (roomState.isHost || roomState.isDJ || roomState.auxMode === 'open-aux')) {
+        roomSync.broadcastPlayback(enriched[0], true, 0, nextQueue);
+      } else if (!roomState.isHost) {
+        roomSync.requestAddManyToQueue(enriched);
+      }
     }
   };
 

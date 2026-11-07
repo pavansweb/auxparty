@@ -358,6 +358,11 @@ export class RoomSyncService {
       payload.type === 'TRIGGER_SOUND' ||
       payload.type === 'VOTE_SKIP' ||
       payload.type === 'REQUEST_ADD_TO_QUEUE' ||
+      payload.type === 'REQUEST_ADD_MANY_TO_QUEUE' ||
+      payload.type === 'QUEUE_UPDATE' ||
+      payload.type === 'SYNC_STATE' ||
+      payload.type === 'INIT_SYNC' ||
+      payload.type === 'VOTE_TRACK' ||
       payload.type === 'JOIN' ||
       payload.type === 'LEAVE';
 

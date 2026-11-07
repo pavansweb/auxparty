@@ -5,9 +5,17 @@ function extractYouTubeId(urlOrId) {
     return str;
   }
   const match = str.match(
-    /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/
+    /(?:(?:youtube|music\.youtube|m\.youtube)\.com\/(?:watch\?.*v=|embed\/|v\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
   );
-  return match ? match[1] : null;
+  if (match) return match[1];
+
+  try {
+    const url = new URL(str.startsWith('http') ? str : `https://${str}`);
+    const v = url.searchParams.get('v');
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+  } catch {}
+
+  return null;
 }
 
 function cleanHtml(str) {

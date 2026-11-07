@@ -31,19 +31,18 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, def
 
   if (!isOpen) return null;
 
-  const handleResolve = async (urlToResolve?: string) => {
-    const target = urlToResolve || inputUrl;
-    if (!target.trim()) return;
+  const handleResolve = async (urlToResolve?: string): Promise<Track | null> => {
+    const target = (urlToResolve || inputUrl).trim();
+    if (!target) return null;
 
     const videoId = extractYouTubeId(target);
     if (!videoId) {
       setError('Please enter a valid YouTube or YouTube Music link (e.g. https://youtu.be/... or watch?v=...)');
-      return;
+      return null;
     }
 
     setLoading(true);
     setError(null);
-    setPreviewTrack(null);
     setAddedSuccess(false);
 
     try {
@@ -52,10 +51,22 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, def
         throw new Error('Could not fetch YouTube video details. Ensure the video is public.');
       }
       setPreviewTrack(track);
+      return track;
     } catch (err: any) {
       setError(err.message || 'Failed to resolve YouTube link');
+      return null;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputUrl(val);
+    setError(null);
+    setAddedSuccess(false);
+    if (extractYouTubeId(val)) {
+      handleResolve(val);
     }
   };
 
@@ -64,6 +75,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, def
       const text = await navigator.clipboard.readText();
       if (text) {
         setInputUrl(text);
+        setError(null);
         handleResolve(text);
       }
     } catch (e) {
@@ -75,22 +87,35 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, def
     if (!previewTrack) return;
     if (roomState.connected) {
       addToRoomQueue(previewTrack);
+    } else {
+      playTrack(previewTrack);
     }
-    playTrack(previewTrack);
     onClose();
   };
 
-  const handleAddToQueue = () => {
-    if (!previewTrack) return;
+  const handleAddToQueue = async () => {
+    let trackToAdd = previewTrack;
+
+    if (!trackToAdd) {
+      const target = inputUrl.trim();
+      if (!target) {
+        setError('Please paste a YouTube link first');
+        return;
+      }
+      trackToAdd = await handleResolve(target);
+    }
+
+    if (!trackToAdd) return;
+
     if (roomState.connected) {
-      addToRoomQueue(previewTrack);
+      addToRoomQueue(trackToAdd);
     } else {
-      addToQueue(previewTrack);
+      addToQueue(trackToAdd);
     }
     setAddedSuccess(true);
     setTimeout(() => {
       onClose();
-    }, 900);
+    }, 800);
   };
 
   return (
@@ -136,14 +161,20 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, def
               <input
                 type="text"
                 value={inputUrl}
-                onChange={(e) => {
-                  setInputUrl(e.target.value);
-                  setError(null);
+                onChange={handleInputChange}
+                onPaste={(e) => {
+                  const text = e.clipboardData.getData('text');
+                  if (text) {
+                    setInputUrl(text);
+                    if (extractYouTubeId(text)) {
+                      handleResolve(text);
+                    }
+                  }
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    handleResolve();
+                    handleAddToQueue();
                   }
                 }}
                 placeholder="https://www.youtube.com/watch?v=... or youtu.be/..."
@@ -160,11 +191,19 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, def
               </button>
               <button
                 type="button"
-                onClick={() => handleResolve()}
+                onClick={handleAddToQueue}
                 disabled={loading || !inputUrl.trim()}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-bold shadow-lg shadow-red-600/30 transition-all disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-white text-xs font-bold shadow-lg shadow-red-600/30 transition-all disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                title="Add to queue"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Load'}
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>Add to Queue</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

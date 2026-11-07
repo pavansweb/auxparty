@@ -399,6 +399,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           if (isMuted) player.mute();
           else player.unMute();
           setIsPlaying(true);
+          setIsLoading(false);
           notifyHostStateChange(track, true, 0, updatedQueue);
         } else {
           // Retry briefly if player is initializing
@@ -569,6 +570,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Queue actions
   const addToQueue = (track: Track) => {
+    if (!currentTrack) {
+      playTrack(track);
+      return;
+    }
     setQueue((prev) => {
       const updated = [...prev, track];
       notifyHostStateChange(currentTrack, isPlaying, currentTime, updated);
