@@ -20,6 +20,8 @@ interface PlayerContextType {
   playMode: PlayMode;
   isShuffle: boolean;
   isAutoplay: boolean;
+  isAutoplayBlocked: boolean;
+  resumeAutoplay: () => void;
   queue: Track[];
   history: Track[];
   autoplayTrack: Track | null; // Next Up preview track for YouTube autoplay
@@ -80,6 +82,32 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [autoplayPool, setAutoplayPool] = useState<Track[]>([]);
   const [autoplayTrack, setAutoplayTrack] = useState<Track | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
+
+  const currentTrackRef = useRef<Track | null>(currentTrack);
+  currentTrackRef.current = currentTrack;
+
+  const resumeAutoplay = useCallback(() => {
+    setIsAutoplayBlocked(false);
+    if (isYouTubeTrack(currentTrackRef.current)) {
+      ytPlayerRef.current?.playVideo?.();
+    } else if (audioRef.current && currentTrackRef.current) {
+      audioRef.current.play().catch(console.error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoplayBlocked) return;
+    const onClick = () => {
+      resumeAutoplay();
+    };
+    window.addEventListener('click', onClick, { once: true });
+    window.addEventListener('keydown', onClick, { once: true });
+    return () => {
+      window.removeEventListener('click', onClick);
+      window.removeEventListener('keydown', onClick);
+    };
+  }, [isAutoplayBlocked, resumeAutoplay]);
 
   // Callback to inform RoomSync when host performs an action
   const stateNotifierRef = useRef<((t: Track | null, playing: boolean, pos: number, q: Track[]) => void) | null>(null);
@@ -225,7 +253,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     const handleTimeUpdate = () => {
-      if (!isYouTubeTrack(currentTrack)) {
+      if (!isYouTubeTrack(currentTrackRef.current)) {
         setCurrentTime(audio.currentTime);
         if (audio.buffered.length > 0) {
           setBuffered(audio.buffered.end(audio.buffered.length - 1));
@@ -234,30 +262,30 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     const handleLoadedMetadata = () => {
-      if (!isYouTubeTrack(currentTrack)) {
+      if (!isYouTubeTrack(currentTrackRef.current)) {
         setDuration(audio.duration || 0);
         setIsLoading(false);
       }
     };
 
     const handleWaiting = () => {
-      if (!isYouTubeTrack(currentTrack)) setIsLoading(true);
+      if (!isYouTubeTrack(currentTrackRef.current)) setIsLoading(true);
     };
     const handleCanPlay = () => {
-      if (!isYouTubeTrack(currentTrack)) setIsLoading(false);
+      if (!isYouTubeTrack(currentTrackRef.current)) setIsLoading(false);
     };
     const handlePlaying = () => {
-      if (!isYouTubeTrack(currentTrack)) {
+      if (!isYouTubeTrack(currentTrackRef.current)) {
         setIsPlaying(true);
         setIsLoading(false);
       }
     };
     const handlePause = () => {
-      if (!isYouTubeTrack(currentTrack)) setIsPlaying(false);
+      if (!isYouTubeTrack(currentTrackRef.current)) setIsPlaying(false);
     };
 
     const handleEnded = () => {
-      if (!isYouTubeTrack(currentTrack)) {
+      if (!isYouTubeTrack(currentTrackRef.current)) {
         handleTrackEnded();
       }
     };
@@ -283,7 +311,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.removeEventListener('ended', handleEnded);
       window.removeEventListener('click', setupAudioGraph);
     };
-  }, [currentTrack]);
+  }, []);
 
   // 4. Pre-fetch Autoplay Recommendations whenever currentTrack changes
   useEffect(() => {
@@ -635,29 +663,47 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (isYouTubeTrack(track)) {
         if (audioRef.current) audioRef.current.pause();
         const videoId = track.youtubeId || track.id.replace('yt-', '');
-        ytPlayerRef.current?.loadVideoById?.({
-          videoId: videoId,
-          startSeconds: targetTime,
-        });
-        if (hostPlaying) {
-          ytPlayerRef.current?.playVideo?.();
-          setIsPlaying(true);
-        } else {
-          ytPlayerRef.current?.pauseVideo?.();
-          setIsPlaying(false);
-        }
+        const loadYtSync = () => {
+          const player = ytPlayerRef.current;
+          if (player && typeof player.loadVideoById === 'function') {
+            player.loadVideoById({
+              videoId: videoId,
+              startSeconds: targetTime,
+            });
+            player.setVolume(volume * 100);
+            if (isMuted) player.mute();
+            else player.unMute();
+            if (hostPlaying) {
+              player.playVideo?.();
+              setIsPlaying(true);
+            } else {
+              player.pauseVideo?.();
+              setIsPlaying(false);
+            }
+            setIsLoading(false);
+          } else {
+            setTimeout(loadYtSync, 200);
+          }
+        };
+        loadYtSync();
       } else if (audioRef.current) {
         ytPlayerRef.current?.pauseVideo?.();
         const audio = audioRef.current;
-        audio.src = track.streamUrl;
+        if (audio.src !== track.streamUrl) {
+          audio.src = track.streamUrl;
+        }
         audio.currentTime = targetTime;
         if (hostPlaying) {
-          audio.play().catch(console.error);
+          audio.play().catch((err) => {
+            console.warn('Autoplay blocked by browser policy:', err);
+            setIsAutoplayBlocked(true);
+          });
           setIsPlaying(true);
         } else {
           audio.pause();
           setIsPlaying(false);
         }
+        setIsLoading(false);
       }
     } else {
       // Same track: check drift
@@ -704,6 +750,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         playMode,
         isShuffle,
         isAutoplay,
+        isAutoplayBlocked,
+        resumeAutoplay,
         queue,
         history,
         autoplayTrack,

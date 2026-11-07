@@ -52,11 +52,24 @@ const RoomContext = createContext<RoomContextType | null>(null);
 
 export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const player = usePlayer();
+  const playerRef = React.useRef(player);
+  playerRef.current = player;
+
   const [roomState, setRoomState] = useState<RoomState>(initialRoomState);
   const [messages, setMessages] = useState<RoomMessage[]>([]);
   const [reactions, setReactions] = useState<FloatingReaction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
+
+  // Keep roomSync stateGetter always fresh and updated with real-time player values
+  useEffect(() => {
+    roomSync.setStateGetter(() => ({
+      track: playerRef.current.currentTrack,
+      isPlaying: playerRef.current.isPlaying,
+      position: playerRef.current.currentTime,
+      queue: playerRef.current.queue,
+    }));
+  }, [player.currentTrack, player.isPlaying, player.currentTime, player.queue]);
 
   // Inform peers whenever playback state changes (if Host or Open Aux)
   useEffect(() => {
@@ -66,6 +79,34 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
   }, [roomState.connected, roomState.isHost, roomState.auxMode, roomState.isDJ, player]);
+
+  // Periodic heartbeat sync: while Host/DJ is playing, broadcast state every 3 seconds to keep sub-second lockstep sync
+  useEffect(() => {
+    if (!roomState.connected || (!roomState.isHost && !roomState.isDJ && roomState.auxMode !== 'open-aux')) {
+      return;
+    }
+    if (!player.isPlaying || !player.currentTrack) return;
+
+    const timer = setInterval(() => {
+      roomSync.broadcastPlayback(
+        player.currentTrack,
+        player.isPlaying,
+        player.currentTime,
+        player.queue
+      );
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [
+    roomState.connected,
+    roomState.isHost,
+    roomState.isDJ,
+    roomState.auxMode,
+    player.isPlaying,
+    player.currentTrack,
+    player.currentTime,
+    player.queue,
+  ]);
 
   // Reset skip votes when currentTrack changes
   useEffect(() => {
@@ -285,7 +326,18 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
           activeDjName: cleanHostName,
           userName: cleanHostName,
           connected: true,
-          peers: [{ id: 'host', name: cleanHostName, isHost: true, isDJ: true, color: '#8b5cf6' }],
+          peers:
+            roomSync.activePeers.length > 0
+              ? roomSync.activePeers
+              : [
+                  {
+                    id: roomSync.myPeerId || 'host',
+                    name: cleanHostName,
+                    isHost: true,
+                    isDJ: true,
+                    color: '#8b5cf6',
+                  },
+                ],
           auxMode: 'host-only',
           skipVotes: [],
         });
@@ -335,7 +387,18 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
           activeDjName: 'DJ',
           userName: cleanName,
           connected: true,
-          peers: [],
+          peers:
+            roomSync.activePeers.length > 0
+              ? roomSync.activePeers
+              : [
+                  {
+                    id: roomSync.myPeerId || 'guest',
+                    name: cleanName,
+                    isHost: false,
+                    isDJ: false,
+                    color: roomSync.userColor,
+                  },
+                ],
           auxMode: 'host-only',
           skipVotes: [],
         });

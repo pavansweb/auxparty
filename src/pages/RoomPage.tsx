@@ -89,6 +89,8 @@ export const RoomPage: React.FC = () => {
     duration,
     isLoading,
     isAutoplay,
+    isAutoplayBlocked,
+    resumeAutoplay,
     autoplayTrack,
     toggleAutoplay,
     togglePlayPause,
@@ -250,13 +252,27 @@ export const RoomPage: React.FC = () => {
     }, 280);
   }, [roomSearchQuery]);
 
-  // Auto-join room on mount if nickname is already saved
+  // Reconnect or auto-join room on mount
   useEffect(() => {
-    if (targetCode && (!roomState.connected || roomState.roomCode !== targetCode)) {
-      const saved = localStorage.getItem('auxparty_nickname');
-      if (saved && saved.trim()) {
-        joinRoom(targetCode, saved.trim());
+    if (!targetCode) return;
+    if (roomState.connected && roomState.roomCode === targetCode) return;
+
+    // 1. Check if user was previously Host of this room in this session
+    try {
+      const saved = sessionStorage.getItem('auxparty_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.role === 'host' && parsed.roomCode === targetCode) {
+          createRoom(parsed.userName || 'DJ Host', targetCode);
+          return;
+        }
       }
+    } catch {}
+
+    // 2. Auto-join as guest if nickname is already saved in localStorage
+    const savedName = localStorage.getItem('auxparty_nickname');
+    if (savedName && savedName.trim()) {
+      joinRoom(targetCode, savedName.trim());
     }
   }, [targetCode]);
 
@@ -983,6 +999,17 @@ export const RoomPage: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Autoplay Blocked / Tap to Sync Audio Banner */}
+          {isAutoplayBlocked && (
+            <div
+              onClick={resumeAutoplay}
+              className="absolute top-12 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-2xl bg-purple-600/30 border border-purple-500/50 text-white text-xs font-bold shadow-2xl backdrop-blur-md cursor-pointer flex items-center gap-2 animate-pulse hover:bg-purple-600/40 transition-all"
+            >
+              <Volume2 className="w-4 h-4 text-purple-300" />
+              <span>Tap anywhere to enable synchronized audio 🔊</span>
+            </div>
+          )}
 
           {/* Stage Floating Reactions Dock (Vertical on Right - Exact Image 1 Match) */}
           <div className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-2 p-1.5 rounded-full glass-panel-subtle border border-white/15 shadow-2xl backdrop-blur-md">

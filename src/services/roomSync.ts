@@ -74,6 +74,11 @@ export class RoomSyncService {
   public userColor: string = '#8b5cf6';
   public auxMode: AuxMode = 'host-only';
   public activeDjName: string = '';
+  public hostName: string = '';
+
+  public setStateGetter(getter: StateGetter) {
+    this.stateGetter = getter;
+  }
 
   public onSyncReceived?: (payload: SyncPayload) => void;
   public onPeersUpdated?: (peers: RoomPeer[]) => void;
@@ -117,6 +122,7 @@ export class RoomSyncService {
     this.userName = name || (isHostRole ? 'DJ (Host)' : 'Friend');
     this.isHost = isHostRole;
     this.isDJ = isHostRole;
+    this.hostName = isHostRole ? this.userName : '';
     this.activeDjName = isHostRole ? this.userName : '';
     this.auxMode = 'host-only';
     this.currentSkipVotes.clear();
@@ -239,7 +245,7 @@ export class RoomSyncService {
   // Connect to the room pubsub channel using WebSocket (with SSE fallback)
   private async connectCloudChannel(): Promise<boolean> {
     const topic = `${TOPIC_PREFIX}${this.roomCode.toLowerCase()}`;
-    const wsUrl = `${WS_SERVER}/${topic}/ws`;
+    const wsUrl = `${WS_SERVER}/${topic}/ws?since=10m`;
 
     return new Promise((resolve) => {
       let resolved = false;
@@ -308,7 +314,7 @@ export class RoomSyncService {
       this.es = null;
     }
     try {
-      const sseUrl = `${PUB_SERVER}/${topic}/sse`;
+      const sseUrl = `${PUB_SERVER}/${topic}/sse?since=10m`;
       const es = new EventSource(sseUrl);
       this.es = es;
 
@@ -362,6 +368,7 @@ export class RoomSyncService {
       payload.type === 'QUEUE_UPDATE' ||
       payload.type === 'SYNC_STATE' ||
       payload.type === 'INIT_SYNC' ||
+      payload.type === 'REQUEST_STATE' ||
       payload.type === 'VOTE_TRACK' ||
       payload.type === 'JOIN' ||
       payload.type === 'LEAVE';
@@ -463,6 +470,7 @@ export class RoomSyncService {
                   position: st.position,
                   timestamp: Date.now(),
                   queue: st.queue,
+                  hostName: this.isHost ? this.userName : this.hostName,
                   activeDjName: this.activeDjName,
                   auxMode: this.auxMode,
                   peers: this.activePeers,
@@ -507,6 +515,7 @@ export class RoomSyncService {
               position: st.position,
               timestamp: Date.now(),
               queue: st.queue,
+              hostName: this.isHost ? this.userName : this.hostName,
               activeDjName: this.activeDjName,
               auxMode: this.auxMode,
               peers: this.activePeers,
@@ -631,8 +640,10 @@ export class RoomSyncService {
       position,
       timestamp: Date.now(),
       queue,
+      hostName: this.isHost ? this.userName : this.hostName,
       activeDjName: this.activeDjName,
       auxMode: this.auxMode,
+      peers: this.activePeers,
     });
   }
 
