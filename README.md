@@ -1,69 +1,61 @@
-# 🎧 AuxParty — Stream Together in 320kbps HIFI
+# AuxParty (SyncWave) 🎧
 
-> **Pass the Aux.** Synchronized music streaming for you and your friends with zero subscriptions, zero ads, and 100% uptime.
+A high-fidelity real-time collaborative music listening room built with **Next.js 15 (App Router)**, **TypeScript**, **Tailwind CSS**, **Zustand**, and **Socket.IO**.
 
 ![AuxParty Banner](https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&auto=format&fit=crop&q=80)
 
 ---
 
-## ✨ Features
+## 🚀 Key Improvements & Architecture
 
-- **🚀 100% Uptime & Zero Play Failures:** Streams high-bitrate **320kbps AAC/MP4** directly from enterprise Akamai and Microsoft Azure CDN edges (`Access-Control-Allow-Origin: *`). No volunteer scraper proxies that get rate-limited.
-- **👥 Peer-to-Peer Sync Rooms:**
-  - Create a room and get a unique 6-character room code (e.g. `AUX-7892`).
-  - Friends join via room code or direct shareable URL (`/?room=AUX789`).
-  - **Lockstep Sync:** Play/pause, track changes, and scrubber seeks are synchronized in real-time with sub-second latency compensation over WebRTC data channels.
-  - **Live Room Chat & Floating Reactions:** Send live floating emojis (🔥, ❤️, ⚡, 🎧, 🎉) and chat while jamming.
-- **🟢 Instant Spotify Playlist Import:**
-  - Paste any public Spotify playlist URL (e.g. `https://open.spotify.com/playlist/...`).
-  - Extracts track metadata and automatically matches songs against the 320kbps streaming engine.
-  - 1-click **Play All** or **Add All to Queue**.
-- **🌊 Real-time Audio Spectrum Visualizer:** Built with the HTML5 Web Audio API and Canvas. Dynamic frequency equalizer reacts in real-time to the rhythm.
-- **📱 Lock-Screen & Media Keys Integration:** Uses the native `navigator.mediaSession` API. Artwork, song titles, and hardware play/pause/skip buttons work right on your phone lock screen and keyboard media keys.
-- **🎨 Spotify / Apple Music-grade Dark Aesthetic:** Sleek glassmorphism, responsive grid & list views, up-next queue drawer, and an immersive fullscreen view with dynamic album color blooms.
+### 1. Robust State Persistence & Horizontal Scaling
+- **SQLite & Redis Persistence**: Room states, queues, chat history, and permissions persist across server restarts via Node.js built-in `node:sqlite` (`data/rooms.db`) or Redis (`REDIS_URL`).
+- **Cluster & Redis Adapter**: Ready for multi-instance horizontal scaling with `@socket.io/redis-adapter`.
+
+### 2. Room Authority, DJ Roles & Queue Conflict Prevention
+- **Host / DJ Mode**: In DJ mode, only the room host or designated DJ can control playback state and seek.
+- **Collaborative Mode**: All participants can add songs and vote.
+- **Vote-to-Skip**: If participants want to skip a track, >50% vote threshold automatically advances the queue.
+- **Queue Protection**: Server prevents race conditions and rogue queue overwrites.
+
+### 3. High-Precision NTP Clock Sync (Sub-50ms Drift Compensation)
+- **Client-Server Ping/Pong**: Measures Round-Trip Time (RTT) and calculates clock offset: `offset = (serverTime - clientTime) + (RTT / 2)`.
+- **Master Time Compensation**: `masterTime = room.seekTime + (Date.now() + clockOffset - room.lastUpdated) / 1000`.
+- **Dynamic Playback Rate Steering**: Small drifts (100ms–1200ms) smoothly steer `playbackRate` (0.98x / 1.02x) for click-free sync. Hard seeks only trigger when drift exceeds 1.2s.
+
+### 4. Fast Concurrent Spotify Playlist Importer
+- **5-Concurrent Worker Pool**: Parallel resolution replaces sequential loops to avoid timeouts.
+- **24-Hour Cache**: Resolved `title + artist -> streamUrl` queries are cached to minimize external API roundtrips.
+
+### 5. Web Audio Visualizer, Dynamic Ambient Glow & Media Session
+- **Web Audio Analyser**: Responsive frequency equalizer and waveform visualizer.
+- **Dynamic Ambient Glow**: Canvas color extraction samples album covers and smoothly transitions ambient room gradients.
+- **Native OS Media Session**: Track info, artwork, and hardware media keys (`play`, `pause`, `prev`, `next`, `seekto`) work on lock screens and smartwatches.
+- **Audio Quality Switcher**: Toggle between 320kbps High Quality, 96kbps Data Saver, and Adaptive Auto.
+- **Autoplay Handling**: Sleek animated "Click to Sync & Listen" banner when browsers block unprompted audio autoplay.
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Run Locally
 
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons
-- **Real-Time Sync:** WebRTC via PeerJS (P2P mesh, 0 backend servers needed)
-- **Audio Engine:** HTML5 Audio + Web Audio API AnalyserNode
-- **Cryptography:** CryptoJS (client-side & edge DES-ECB stream decryption)
-
----
-
-## 🚀 Quick Start (Local)
-
-1. **Clone the repository:**
-   ```bash
-   git clone <repo-url>
-   cd auxparty
-   ```
-
-2. **Install dependencies:**
+1. **Install dependencies:**
    ```bash
    npm install
    ```
 
-3. **Start the development server:**
+2. **Start the development server:**
    ```bash
    npm run dev
    ```
-   Open `http://localhost:5173` in your browser.
+   Open `http://localhost:3000` in your browser.
 
-4. **Listen with friends:**
-   - Click **"Listen With Friends"** in the top navigation.
-   - Click **"Host a Party"** -> Copy your 6-character Room Code or Invite Link.
-   - Send the link to your friends. When they join, they'll be in sync with you!
+3. **Run automated tests:**
+   ```bash
+   npm test
+   ```
 
----
-
-## 🌐 Deploy in 1-Click for Free (Vercel)
-
-AuxParty includes built-in serverless edge handlers in `/api`:
-
-1. Push this repository to GitHub.
-2. Import the repository into [Vercel](https://vercel.com).
-3. Framework Preset: **Vite**.
-4. Click **Deploy**. Done!
+4. **Production build:**
+   ```bash
+   npm run build
+   npm start
+   ```

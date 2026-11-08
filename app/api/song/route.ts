@@ -1,0 +1,3 @@
+import { NextResponse } from 'next/server';
+import { fallbackTracks, normalizeSong } from '@/lib/tracks';
+export async function GET(req:Request){const id=new URL(req.url).searchParams.get('id');if(!id)return NextResponse.json({error:'id is required'}, {status:400});try{const r=await fetch(`https://saavn.me/songs?id=${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(6000)});if(r.ok){const d=await r.json();const song=Array.isArray(d?.data)?d.data[0]:d?.data;const track=normalizeSong(song);if(track?.streamUrl)return NextResponse.json({track});}}catch{}const fallback=fallbackTracks.find(t=>t.id===id);return fallback?NextResponse.json({track:fallback}):NextResponse.json({error:'Song unavailable'}, {status:404});}
